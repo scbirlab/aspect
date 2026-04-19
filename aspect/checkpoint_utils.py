@@ -34,14 +34,6 @@ def _load_hf_dataset(checkpoint, filename) -> Union[Dataset, IterableDataset]:
     return load_from_disk(os.path.join(checkpoint, filename))
 
 
-def _load_torch_weights(checkpoint, filename):
-    import torch
-    return torch.load(
-        os.path.join(checkpoint, filename),
-        weights_only=True,
-    )
-
-
 FILE_LOADING_CALLBACKS = {
     "json": _load_json,
     "hf-dataset": _load_hf_dataset, 

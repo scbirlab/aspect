@@ -6,7 +6,7 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'carabiner'
+project = 'aspect'
 copyright = '2023, Eachan Johnson'
 author = 'Eachan Johnson'
 release = '0.0.1'

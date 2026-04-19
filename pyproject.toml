@@ -1,5 +1,5 @@
 [project]
-name = "duvidnn"
+name = "aspect"
 version = "0.0.1"
 authors = [
   { name="Eachan Johnson", email="eachan.johnson@crick.ac.uk" },
@@ -29,44 +29,37 @@ classifiers = [
 
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Programming Language :: Python :: 3 :: Only",
 ]
 
 dependencies = [
-  "carabiner-tools[pd,mpl]>=0.0.4",
-  "datasets<4,>=3.0.0",
-  "duvida[torch]>=0.0.3.post1",
+  "carabiner-tools[pd,mpl]>=0.0.5.post3",
+  "datasets>=3",
   "huggingface_hub",
   "numpy",
   "platformdirs>=4.4.0",
-  "torch>=2.4,<=2.9",
-  "torchvision",
-  "lightning",
-  "scipy",
-  "tensorboard",
   "tqdm",
 ]
 
 [project.optional-dependencies]
-transformers = ["torch>=2.4", "torchvision", "transformers"]
-chem = ["chemprop>=2.1.0", "schemist>=0.0.4.post1", "scikit-learn>=1.7"]
+chem = ["chemprop>=2.1.0", "schemist>=0.0.6", "scikit-learn>=1.7"]
 bio = ["vectome>=0.0.4"]
-splits = ["umap-learn", "scipy", "schemist>=0.0.4.post1", "tdigest>=0.5", "faiss-cpu>=1.11"]
-splits_gpu = ["umap-learn", "scipy", "schemist>=0.0.4.post1", "tdigest>=0.5", "faiss-gpu"]
-dev = ["duvidnn[chem,bio,splits,transformers]", "pytest", "flake8"]
+dev = ["aspect[chem,bio]", "pytest", "flake8"]
 
 [project.urls]
-"Homepage" = "https://github.com/scbirlab/duvidnn"
-"Bug Tracker" = "https://github.com/scbirlab/duvidnn/issues"
+"Homepage" = "https://github.com/scbirlab/aspect"
+"Bug Tracker" = "https://github.com/scbirlab/aspect/issues"
 
 [project.scripts] 
-duvidnn = "duvidnn.cli_module.cli:main"
+aspect = "aspect.cli_module.cli:main"
 
 [tool.setuptools]
 #packages = ["duvida"]
 # If there are data files included in your packages that need to be
 # installed, specify them here.
-package-data = {duvidnn = ["data/*.json"]}
+package-data = {aspect = ["data/*.json"]}
 
 [build-system]
 # These are the assumed default build requirements from pip:
@@ -75,4 +68,4 @@ requires = ["setuptools>=43.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [test]
-deps = ["pytest>=7.4", "pytest-cov", "duvidnn[dev]"] 
+deps = ["pytest>=7.4", "pytest-cov", "aspect[dev]"] 
