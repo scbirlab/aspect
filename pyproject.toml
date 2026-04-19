@@ -10,8 +10,6 @@ requires-python = ">=3.11"
 license = { file = "LICENSE" }
 keywords = [
   "ai",
-  "active-learning", 
-  "bayesian-optimization",
   "data",
   "deep-learning",
   "machine-learning",

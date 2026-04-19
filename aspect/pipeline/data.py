@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Mapping, Tuple, Optional, Union
 
 from abc import abstractmethod, ABC
+from dataclasses import dataclass
 from functools import partial
 import os
 
@@ -18,32 +19,53 @@ import numpy as np
 from numpy.typing import ArrayLike
 from schemist.converting import convert_string_representation
 
-from .. import app_name, __version__
-from ..checkpoint_utils import load_checkpoint_file, save_json
-from ..utils.package_data import CACHE_DIR
-from .preprocessing import Preprocessor
-from .typing import DataLike, FeatureLike, StrOrIterableOfStr
+from . import app_name, __version__
+from .checkpoint_utils import load_checkpoint_file, save_json
+from .io import AutoDataset
+from ..package_data import CACHE_DIR
+from ..transform.preprocessing import Preprocessor
+from ..typing import DataLike, FeatureLike, StrOrIterableOfStr
 
-_DEFAULT_BATCH_SIZE: int = 128
+DEFAULT_BATCH_SIZE: int = 1024
+X_KEY: str = f"{app_name}/v{__version__}/inputs"
+Y_KEY: str = f"{app_name}/v{__version__}/labels"
+CONTEXT_KEY: str = f"{_in_key}:context"
+DEFAULT_FORMAT: str = "numpy"
 
+def _check_column_presence(
+    features: StrOrIterableOfStr, 
+    labels: StrOrIterableOfStr,
+    data: Dataset
+) -> Iterable[str]:
+    columns = cast(features, to=list) + cast(labels, to=list)
+    data_cols = data.column_names
+    absent_columns = [col for col in columns if col not in data_cols]
+    if len(absent_columns) > 0:
+        raise ValueError(
+            f"""
+            Requested columns ({', '.join(columns)}) not present in 
+            {type(data)}: {', '.join(absent_columns)}.
+            """
+        )
+    return columns
 
-class DataMixinBase(ABC):
+@dataclass
+class DataPipeline:
 
-    """Add data-loading capability to models.
+    """Data processing pipeline.
     
     """
-
-    _default_cache: str = CACHE_DIR #f"cache/{app_name}/v{__version__}/data/"
+    preprocessors
     _default_preprocessing_args: dict = {}
-    _in_key: str = f"{app_name}/v{__version__}/inputs"
-    _out_key: str = f"{app_name}/v{__version__}/labels"
-    _context_key: str = f"{_in_key}:context"
+    _in_key: str = X_KEY
+    _out_key: str = Y_KEY
+    _context_key: str = CONTEXT_KEY
     _input_training_data = None
     _input_featurizers = None
     _input_cols = None
     _use_context = False
     _label_cols = None
-    _format: str = "numpy"
+    _format: str = DEFAULT_FORMAT
     _format_kwargs: Optional[Mapping[str, Any]] = None
     training_data = None
     training_example = None
@@ -51,7 +73,7 @@ class DataMixinBase(ABC):
     output_shape = None
     context_shape = None
 
-    def save_data_checkpoint(
+    def checkpoint(
         self, 
         checkpoint_dir: str
     ):
@@ -86,7 +108,7 @@ class DataMixinBase(ABC):
         save_json(data_config, os.path.join(checkpoint_dir, "data-config.json"))
         return None
 
-    def load_data_checkpoint(
+    def load_checkpoint(
         self, 
         checkpoint: str,
         cache_dir: Optional[str] = None
@@ -203,78 +225,6 @@ class DataMixinBase(ABC):
         return x
 
     @staticmethod
-    def _check_column_presence(
-        features: StrOrIterableOfStr, 
-        labels: StrOrIterableOfStr,
-        data: Dataset
-    ) -> Iterable[str]:
-        columns = cast(features, to=list) + cast(labels, to=list)
-        data_cols = data.column_names
-        absent_columns = [col for col in columns if col not in data_cols]
-        if len(absent_columns) > 0:
-            raise ValueError(
-                f"""
-                Requested columns ({', '.join(columns)}) not present in 
-                {type(data)}: {', '.join(absent_columns)}.
-                """
-            )
-        return columns
-    
-    @staticmethod
-    def _load_from_csv(
-        filename: str,
-        cache: Optional[str] = None
-    ) -> Dataset:
-        from datasets import Dataset
-
-        if filename.endswith((".csv", ".tsv", ".txt", ".csv.gz", ".tsv.gz", ".txt.gz")):
-            read_f = partial(
-                Dataset.from_csv,
-                cache_dir=cache,
-                sep="," if filename.endswith((".csv", ".csv.gz")) else "\t",
-            )
-        elif filename.endswith(".parquet"):
-            read_f = partial(Dataset.from_parquet, cache_dir=cache)
-        elif filename.endswith(".hf"):
-            read_f = Dataset.load_from_disk
-        elif filename.endswith(".arrow"):
-            read_f = Dataset.from_file
-        else:
-            raise IOError(f"Could not infer how to open '{filename}' from its extension.")
-        return read_f(filename)
-
-    @classmethod
-    def _load_from_dataframe(
-        cls,
-        dataframe: Union[DataFrame, Mapping[str, ArrayLike]],
-        cache: Optional[str] = None
-    ) -> Dataset:
-        from datasets.fingerprint import Hasher
-        from pandas import DataFrame
-
-        if cache is None:
-            cache = cls._default_cache
-            print_err(f"Defaulting to cache: {cache}")
-        if not isinstance(dataframe, DataFrame) and isinstance(dataframe, Mapping):
-            dataframe = DataFrame(dataframe)
-
-        hash_name = Hasher.hash(dataframe)
-        df_temp_file = os.path.join(cache, "df-load", f"{hash_name}.csv")
-        df_temp_dir = os.path.dirname(df_temp_file)
-        if not os.path.exists(df_temp_dir):
-            os.makedirs(df_temp_dir)
-
-        if not os.path.exists(df_temp_file):
-            print_err(f"Caching dataframe at {df_temp_file}")
-            dataframe.to_csv(df_temp_file, index=False)
-
-        print_err(f"Reloading dataframe from {df_temp_file}")
-        return cls._load_from_csv(
-            df_temp_file, 
-            cache=cache,
-        )
-
-    @staticmethod
     def _resolve_featurizer(
         featurizer: FeatureLike,
         transformer_prefix: str
@@ -355,59 +305,13 @@ class DataMixinBase(ABC):
             resolved_featurizers.append(featurizer)
         return resolved_featurizers
 
-    @staticmethod
-    def _resolve_hf_hub_dataset(
-        ref: str, 
-        cache: str,
-    ) -> Dataset:
-        from datasets import concatenate_datasets, load_dataset, DatasetDict
-
-        hf_ref_full = ref.split("hf://")[-1]
-        hf_ref = hf_ref_full.split("@")[0] if "@" in ref else hf_ref_full
-        if ":" in hf_ref_full:
-            ds_config, ds_split = hf_ref_full.split("@")[-1].split(":")[:2]
-        else:
-            ds_config, ds_split = hf_ref_full.split("@")[-1], None
-        
-        dataset = load_dataset(path=hf_ref, name=ds_config, split=ds_split, cache_dir=cache)
-        if isinstance(dataset, DatasetDict):
-            dataset = concatenate_datasets([v for key, v in dataset.items()])
-        return dataset
-
     @classmethod
     def _resolve_data(
         cls, 
         data: DataLike, 
         cache: Optional[str] = None
     ) -> Union[Dataset, IterableDataset]:
-        from datasets import Dataset, IterableDataset
-        from pandas import DataFrame
-
-        if isinstance(data, (Dataset, IterableDataset)):
-            dataset = data
-        elif isinstance(data, (DataFrame, Mapping)):
-            dataset = cls._load_from_dataframe(
-                data, 
-                cache=cache,
-            )
-        elif isinstance(data, str):
-            if data.startswith("hf://"):
-                dataset = cls._resolve_hf_hub_dataset(
-                    data,
-                    cache=cache,
-                )
-            else:
-                dataset = cls._load_from_csv(
-                    data, 
-                    cache=cache,
-                )
-        else:
-            raise ValueError(
-                """
-                Data must be a string, Dataset, dictionary, or Pandas DataFrame.
-                """
-            )
-        return dataset
+        return AutoData.load(data, cache)._dataset
 
     @staticmethod
     def _fill_na(
