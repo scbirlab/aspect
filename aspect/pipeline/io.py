@@ -1,3 +1,4 @@
+"""Dataset loading utilities backed by HuggingFace datasets."""
 
 from typing import TYPE_CHECKING, Any, Iterable, Mapping, Optional, Union
 from functools import partial
@@ -15,13 +16,40 @@ if TYPE_CHECKING:
 else:
     Dataset, DataFrame, IterableDataset = Any, Any, Any
 
-from .package_data import DEFAULT_CACHE
+from ..package_data import DEFAULT_CACHE
 
 
 DATASETS_PREFIX: str = "hf://datasets/"
 
-def hasher(s: str, n: int = 16) -> str:
+
+def hasher(s: Union[str, bytes], n: int = 16) -> str:
+    """Return the first *n* hex characters of the SHA-256 hash of *s*.
+
+    Parameters
+    ==========
+    s : str or bytes
+        Input to hash.
+    n : int
+        Length of the returned hex string.
+
+    Returns
+    =======
+    str
+
+    Examples
+    ========
+    >>> h = hasher("hello")
+    >>> len(h)
+    16
+    >>> h == hasher(b"hello")
+    True
+    >>> hasher("hello") != hasher("world")
+    True
+    """
+    if isinstance(s, str):
+        s = s.encode("utf-8")
     return hashlib.sha256(s).hexdigest()[:n]
+
 
 def _lock_path(cache_dir: str, key: str) -> str:
     locks_dir = os.path.join(cache_dir, ".locks")
@@ -56,19 +84,14 @@ def _load_from_file(filename: str, cache: Optional[str] = None) -> Dataset:
         lock_key = (protocol, "")
     elif filename.endswith(".hf"):
         read_f = partial(
-            Dataset.load_from_disk, 
+            Dataset.load_from_disk,
             dataset_path=filename,
         )
         lock_key = ("hf", "")
     else:
         raise IOError(f"Could not infer how to open '{filename}' from its extension.")
 
-    # If no cache, nothing sensible to lock on
-    if cache is None:
-        ds = read_f()
-
-    # Cross-task lock on the shared filesystem
-    lockfile = _lock_path(cache, "_".join(lock_key))
+    lockfile = _lock_path(cache, "_".join(str(k) for k in lock_key))
     with FileLock(lockfile, timeout=60. * 60.):
         ds = read_f()
     if isinstance(ds, DatasetDict):
@@ -78,9 +101,8 @@ def _load_from_file(filename: str, cache: Optional[str] = None) -> Dataset:
 
 
 def _load_from_dataframe(
-    cls,
     dataframe: Union[DataFrame, Mapping[str, ArrayLike], Iterable[Mapping[str, ArrayLike]]],
-    cache: Optional[str] = None
+    cache: Optional[str] = None,
 ) -> Dataset:
     from pandas import DataFrame
 
@@ -94,18 +116,45 @@ def _load_from_dataframe(
     with tempfile.TemporaryDirectory() as tmpdir:
         csv_filename = os.path.join(tmpdir, f"{hash_name}.csv.gz")
         dataframe.to_csv(csv_filename, index=False)
-        ds = _load_from_file(
-            csv_filename, 
-            cache=cache,
-        )
+        ds = _load_from_file(csv_filename, cache=cache)
     return ds
 
 
 def _get_ref_chunk(
-    s, 
-    sep: Optional[str] = None, 
+    s: str,
+    sep: Optional[str] = None,
     all_seps: str = "@~:"
-) -> str:
+) -> Optional[str]:
+    """Extract a chunk from a HuggingFace Hub reference string.
+
+    Parameters
+    ==========
+    s : str
+        Reference string, e.g. ``"owner/repo@v1.0~config:split"``.
+    sep : str, optional
+        Separator that precedes the chunk to extract.  ``None`` extracts the
+        leading part (before any separator in *all_seps*).
+    all_seps : str
+        Characters that act as separators.
+
+    Returns
+    =======
+    str or None
+        The extracted chunk, or ``None`` when *sep* is not found in *s*.
+
+    Examples
+    ========
+    >>> _get_ref_chunk("owner/repo@v1~cfg:split", "@")
+    'v1'
+    >>> _get_ref_chunk("owner/repo@v1~cfg:split", "~")
+    'cfg'
+    >>> _get_ref_chunk("owner/repo@v1~cfg:split", ":")
+    'split'
+    >>> _get_ref_chunk("owner/repo@v1~cfg:split")
+    'owner/repo'
+    >>> _get_ref_chunk("owner/repo", "@") is None
+    True
+    """
     if sep is not None:
         if sep in s:
             s = s.rpartition(sep)[-1]
@@ -117,7 +166,7 @@ def _get_ref_chunk(
 
 
 def _resolve_hf_hub_dataset(
-    ref: str, 
+    ref: str,
     cache: Optional[str] = None
 ) -> Dataset:
     from datasets import concatenate_datasets, load_dataset, DatasetDict
@@ -127,12 +176,12 @@ def _resolve_hf_hub_dataset(
     ver = _get_ref_chunk(ref, "@", all_seps=seps)
     split = _get_ref_chunk(ref, ":", all_seps=seps)
     config = _get_ref_chunk(ref, "~", all_seps=seps)
-    
+
     ds = load_dataset(
-        path=_get_ref_chunk(ref, all_seps=seps), 
-        name=config, 
-        split=split, 
-        revision=ver, 
+        path=_get_ref_chunk(ref, all_seps=seps),
+        name=config,
+        split=split,
+        revision=ver,
         cache_dir=cache,
     )
     if isinstance(ds, DatasetDict):
@@ -142,47 +191,90 @@ def _resolve_hf_hub_dataset(
 
 class AutoDataset:
 
+    """Factory for loading tabular data from many formats into a HuggingFace dataset.
+
+    Supported *data* types:
+
+    - :class:`datasets.Dataset` or :class:`datasets.IterableDataset` — passed through
+    - :class:`pandas.DataFrame` or ``dict`` — converted via a temporary CSV
+    - ``str`` ending in ``.csv``, ``.tsv``, ``.parquet``, ``.json``, ``.arrow``,
+      ``.hf`` — loaded from disk
+    - ``"hf://<repo>[~config][@version][:split]"`` — loaded from HuggingFace Hub
+
+    Examples
+    ========
+    >>> from aspect.pipeline.io import AutoDataset
+    >>> ds = AutoDataset.load({"x": [1, 2, 3], "y": [4, 5, 6]})
+    >>> ds._dataset.column_names
+    ['x', 'y']
+    >>> len(ds._dataset)
+    3
+    """
+
     def __init__(self, dataset):
         self._dataset = dataset
 
     @classmethod
     def load(
-        cls, 
-        data: Union[str, DataFrame], 
-        cache: Optional[str] = None
-    ) -> Union[Dataset, IterableDataset]:
+        cls,
+        data: Union[str, "DataFrame"],
+        cache: Optional[str] = None,
+    ) -> "AutoDataset":
+        """Load *data* and return an :class:`AutoDataset` wrapping it.
+
+        Parameters
+        ==========
+        data : DataLike
+            Input data in any supported format.
+        cache : str, optional
+            HuggingFace datasets cache directory.
+
+        Returns
+        =======
+        AutoDataset
+
+        Examples
+        ========
+        >>> from aspect.pipeline.io import AutoDataset
+        >>> import pandas as pd
+        >>> df = pd.DataFrame({"a": [1.0, 2.0], "b": [3.0, 4.0]})
+        >>> ds = AutoDataset.load(df)
+        >>> sorted(ds._dataset.column_names)
+        ['a', 'b']
+
+        Loading from a plain dict:
+
+        >>> ds2 = AutoDataset.load({"x": [10, 20]})
+        >>> list(ds2._dataset["x"])
+        [10, 20]
+
+        Passing through an existing Dataset:
+
+        >>> from datasets import Dataset
+        >>> raw = Dataset.from_dict({"z": [7, 8, 9]})
+        >>> ds3 = AutoDataset.load(raw)
+        >>> ds3._dataset is raw
+        True
+        """
         from datasets import load_dataset, Dataset, IterableDataset
         from pandas import DataFrame
 
         if isinstance(data, (Dataset, IterableDataset)):
             dataset = data
         elif isinstance(data, (DataFrame, Mapping)):
-            dataset = _load_from_dataframe(
-                data, 
-                cache=cache,
-            )
+            dataset = _load_from_dataframe(data, cache=cache)
         elif isinstance(data, str):
             if data.startswith("hf://"):
-                dataset = _resolve_hf_hub_dataset(
-                    data,
-                    cache=cache,
-                )
+                dataset = _resolve_hf_hub_dataset(data, cache=cache)
             elif os.path.exists(data):
-                dataset = _load_from_file(
-                    data,
-                    cache=cache,
-                )
+                dataset = _load_from_file(data, cache=cache)
             else:
                 raise ValueError(
-                    f"""
-                    If `data` is a string, it must start with "{DATASETS_PREFIX}" or a path to an existing file. 
-                    It was "{data}".
-                    """
+                    f'If `data` is a string it must start with "hf://" or be '
+                    f'a path to an existing file. Got: "{data}".'
                 )
         else:
             raise ValueError(
-                """
-                Data must be a string, Dataset, dictionary, or Pandas DataFrame.
-                """
+                "data must be a string, Dataset, dict, or Pandas DataFrame."
             )
         return cls(dataset)

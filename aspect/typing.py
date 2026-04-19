@@ -7,7 +7,7 @@ from pandas import DataFrame
 from numpy.typing import ArrayLike
 
 if TYPE_CHECKING:
-    from .preprocessing.serializing import Preprocessor
+    from .serializing import Preprocessor
 else:
     Preprocessor = Any
 

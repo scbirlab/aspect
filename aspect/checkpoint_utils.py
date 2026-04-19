@@ -36,8 +36,7 @@ def _load_hf_dataset(checkpoint, filename) -> Union[Dataset, IterableDataset]:
 
 FILE_LOADING_CALLBACKS = {
     "json": _load_json,
-    "hf-dataset": _load_hf_dataset, 
-    "pt": _load_torch_weights,
+    "hf-dataset": _load_hf_dataset,
 }
 
 
@@ -62,7 +61,12 @@ def load_checkpoint_file(
                 """
             )
     if os.path.exists(checkpoint):
-        obj = callback(checkpoint, filename)
+        try:
+            obj = callback(checkpoint, filename)
+        except Exception as e:
+            if none_on_error:
+                return None
+            raise e
     elif checkpoint.startswith("hf://"):
         checkpoint = checkpoint.split("hf://")[-1]
         if filename.endswith(".hf"):
@@ -89,6 +93,8 @@ def load_checkpoint_file(
                 obj = callback(tmpdirname, filename)
     if obj is not None:
         return obj
+    elif none_on_error:
+        return None
     else:
         raise AttributeError(
             f"Could not load anything from {checkpoint=}, {filename=} with {callback=}."

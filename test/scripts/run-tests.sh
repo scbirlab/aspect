@@ -10,3 +10,22 @@ CACHE="$OUTPUT_DIR/cache"
 OUTPUT="$OUTPUT_DIR/split"
 
 HF_HOME="$CACHE" aspect --help
+
+# Import sanity check
+python -c "
+from aspect.pipeline.data import DataPipeline, ColumnPipeline
+from aspect.serializing import Preprocessor
+from aspect.pipeline.io import AutoDataset
+print('imports OK')
+"
+
+# Doctests
+python -m pytest --doctest-modules \
+    aspect/serializing.py \
+    aspect/functions.py \
+    aspect/pipeline/io.py \
+    aspect/pipeline/data.py \
+    -v
+
+# Unit tests
+python -m pytest test/test_pipeline.py -v
