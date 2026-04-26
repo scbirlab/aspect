@@ -399,7 +399,8 @@ class DataPipeline:
 
     @staticmethod
     def _unsqueeze(
-        x: Mapping[str, ArrayLike]
+        x: Mapping[str, ArrayLike],
+        columns: Optional[Iterable[str]] = None
     ) -> Dict[str, np.ndarray]:
         columns = columns or x.keys()
         for key in columns:
@@ -476,6 +477,7 @@ class DataPipeline:
             .select_columns(all_output_columns)
             .map(
                 self._unsqueeze,
+                fn_kwargs={"columns": output_columns},
                 batched=True,
                 batch_size=batch_size,
                 desc="Unsqueezing",
