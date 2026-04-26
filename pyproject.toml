@@ -35,6 +35,7 @@ classifiers = [
 dependencies = [
   "carabiner-tools[pd,mpl]>=0.0.5.post3",
   "datasets>=3",
+  "filelock",
   "huggingface_hub",
   "numpy",
   "platformdirs>=4.4.0",
