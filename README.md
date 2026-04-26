@@ -1,8 +1,8 @@
 # 🏔️ aspect
 
 ![GitHub Workflow Status (with branch)](https://img.shields.io/github/actions/workflow/status/scbirlab/aspect/python-publish.yml)
-![PyPI - Python Version](https://img.shields.io/pypi/pyversions/aspect)
-![PyPI](https://img.shields.io/pypi/v/aspect)
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/aspect-data)
+![PyPI](https://img.shields.io/pypi/v/aspect-data)
 
 **aspect** is a lightweight featurisation layer for tabular machine-learning data.
 
@@ -140,7 +140,7 @@ aspect featurize compounds.csv \
 ### Basic installation
 
 ```bash
-pip install aspect
+pip install aspect-data
 ```
 
 ### Chemistry features
