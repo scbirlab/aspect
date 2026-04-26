@@ -1,5 +1,5 @@
 [project]
-name = "aspect"
+name = "aspect-data"
 version = "0.0.1"
 authors = [
   { name="Eachan Johnson", email="eachan.johnson@crick.ac.uk" },
@@ -47,7 +47,7 @@ chem = ["schemist>=0.0.6"]
 chemprop = ["chemprop>=2.1.0"]
 deep = ["transformers"]
 bio = ["vectome>=0.0.4"]
-dev = ["aspect[chem,bio]", "pytest>=7.4", "flake8"]
+dev = ["aspect-data[chem,bio]", "pytest>=7.4", "flake8"]
 
 [project.urls]
 "Homepage" = "https://github.com/scbirlab/aspect"
@@ -69,4 +69,4 @@ requires = ["setuptools>=43.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [test]
-deps = ["pytest-cov", "aspect[dev]"] 
+deps = ["pytest-cov", "aspect-data[dev]"] 
