@@ -166,7 +166,7 @@ class ColumnTransform:
         inputs: Mapping[str, Iterable]
     ) -> np.ndarray:
         result = self.function(inputs, self.input_column)
-        if result.ndim == 1:
+        if hasattr(result, "ndim") and result.ndim == 1:
             result = result[:, None]
         return result
 

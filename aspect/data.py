@@ -401,11 +401,15 @@ class DataPipeline:
     def _unsqueeze(
         x: Mapping[str, ArrayLike]
     ) -> Dict[str, np.ndarray]:
-        for key in x:
-            vals = np.asarray(x[key])
-            if vals.ndim == 1:
-                x[key] = vals[:, None]
-        return x
+        def _unsqueeze(x, columns=None):
+            columns = columns or x.keys()
+            for key in columns:
+                vals = x[key]
+                if not isinstance(vals, dict):
+                    vals = np.asarray(x[key])
+                    if vals.ndim == 1 and np.issubdtype(vals.dtype, np.number):
+                        x[key] = vals[:, None]
+            return x
 
     def __call__(
         self, 
