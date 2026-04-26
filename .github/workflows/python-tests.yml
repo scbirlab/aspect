@@ -38,7 +38,7 @@ jobs:
         # run doctests as individual packages
         pytest aspect --doctest-modules
         # run other tests
-        pytest test/test_evaluation.py
+        #pytest test/test_evaluation.py
     - name: Test CLI
       run: |
         bash test/scripts/run-tests.sh

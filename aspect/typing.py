@@ -7,9 +7,9 @@ from pandas import DataFrame
 from numpy.typing import ArrayLike
 
 if TYPE_CHECKING:
-    from .preprocessing.serializing import Preprocessor
+    from .transform.base import ColumnTransform
 else:
-    Preprocessor = Any
+    ColumnTransform = Any
 
 DataLike = Union[
     str, 
@@ -20,11 +20,11 @@ DataLike = Union[
 ]
 FeatureLike = Union[
     str, 
-    Mapping[str, Preprocessor], 
+    Mapping[str, ColumnTransform], 
     Mapping[str, Mapping[str, Any]], 
     Iterable[Union[
         str, 
-        Mapping[str, Preprocessor], 
+        Mapping[str, ColumnTransform], 
         Mapping[str, Mapping[str, Any]]
     ]]
 ]

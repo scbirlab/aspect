@@ -1,7 +1,7 @@
 """Data preprocessing functions."""
 
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Union
-from functools import cache, partial
+from functools import cache, partial, wraps
 import hashlib
 
 import numpy as np
@@ -9,30 +9,34 @@ import numpy as np
 from .registry import register_function
 
 
+def transform(fn) -> Callable:
+    def factory(*args, **kwargs) -> Callable:
+        @wraps(fn)
+        def _fn(
+            data: Mapping[str, Iterable],
+            input_column: str
+        ):
+            return fn(data[input_column], *args, **kwargs)
+        return _fn
+    return factory
+
+
 @register_function("identity")
-def Identity() -> Callable:
+@transform
+def identity(x) -> np.ndarray:
     """Simple pass-through.
     
     """
-    def _identity(
-        data: Mapping[str, Iterable],
-        input_column: str
-    ) -> np.ndarray:
-        return np.asarray(data[input_column])
-    return _identity
+    return np.asarray(x)
 
 
 @register_function("log")
-def Log() -> Callable:
+@transform
+def natural_log(x) -> np.ndarray:
     """Log10 of float.
-    
+
     """
-    def _log(
-        data: Mapping[str, Iterable],
-        input_column: str
-    ) -> np.ndarray:
-        return np.log(np.asarray(data[input_column]))
-    return _log
+    return np.log(x)
 
 
 @register_function("one-hot")
@@ -65,8 +69,7 @@ def Hash(
     normalize: bool = False,
     seed: int = 42,
 ) -> Callable:
-    """
-    Deterministic string hashing featurizer.
+    """Deterministic string hashing featurizer.
 
     Each input string is hashed to a fixed-length numeric vector in [0,1] or [-1,1].
     
@@ -166,71 +169,61 @@ def Hash(
         if projector is not None:
             vectors = vectors @ projector
         if normalize:
-            n = np.linalg.norm(vectors, axis=-1, keepdim=True)
+            n = np.linalg.norm(vectors, axis=-1, keepdims=True)
             nz = n > 0
             vectors[nz[:, 0]] = vectors[nz[:, 0]] / n[nz]
         return vectors
 
     return _hash
-    
 
-@register_function("morgan-fingerprint")
-def MorganFingerprint(**kwargs) -> Callable:
-    """Get Morgan fingerprint from SMILES.
-    
-    """
+
+def chemical_feature(feature_type, **kwargs) -> Callable:
     try:
         from schemist.features import calculate_feature
     except ImportError:
-        raise ImportError(f"schemist not installed! Try `pip install duvidnn[chem]`.")
+        raise ImportError("schemist not installed! Try `pip install aspect[chem]`.")
     feature_calculator = partial(
         calculate_feature,
-        feature_type="fp",
-        return_dataframe=False,
-        on_bits=False,
+        feature_type=feature_type,
         **kwargs,
     )
 
-    def _morgan_fingerprint(
+    def _fn(
         data: Mapping[str, Iterable],
         input_column: str
     ) -> np.ndarray:
         fingerprints, _ = feature_calculator(strings=data[input_column])
         return fingerprints
         
-    return _morgan_fingerprint
-
-
-@register_function("descriptors-2d")
-def Descriptors2D(
-    normalized: bool = True,
-    histogram_normalized: bool = True
-) -> Callable:
-    """Get 2D descriptors from SMILES, optionally normalized.
+    return _fn
     
-    """
-    try:
-        from schemist.features import calculate_feature
-    except ImportError:
-        raise ImportError(f"schemist not installed! Try `pip install duvidnn[chem]`.")
 
-    feature_calculator = partial(
-        calculate_feature,
-        feature_type="2d",
+MorganFingerprint = register_function("morgan-fingerprint")(
+    partial(
+        chemical_feature,
+        "fp",
         return_dataframe=False,
-        normalized=normalized,
-        histogram_normalized=histogram_normalized,
-    )
-    
-    def _descriptors_2d(
-        data: Mapping[str, Iterable],
-        input_column: str
-    ) -> np.ndarray:
-        desc_2d, _ = feature_calculator(strings=data[input_column])
-        return desc_2d
+        on_bits=False,
+    ),
+)
 
-    return _descriptors_2d
+Descriptors2D = register_function("descriptors-2d")(
+    partial(
+        chemical_feature,
+        "2d",
+        return_dataframe=False,
+        normalized=True,
+        histogram_normalized=True,
+    ),
+)
 
+Descriptors3D = register_function("descriptors-3d")(
+    partial(
+        chemical_feature,
+        "3d",
+        return_dataframe=False,
+    ),
+)
 
 @register_function("vectome-fingerprint")
 def VectomeFingerprint(
@@ -245,7 +238,7 @@ def VectomeFingerprint(
     try:
         from vectome.vectorize import vectorize
     except ImportError:
-        raise ImportError(f"Vectome not installed! Try `pip install duvidnn[bio]`.")
+        raise ImportError(f"Vectome not installed! Try `pip install aspect[bio]`.")
 
     feature_calculator = cache(partial(
         vectorize,
@@ -280,7 +273,7 @@ def ChempropData(
             MolGraph
         )
     except ImportError:
-        raise ImportError("Chemprop not installed. Try `pip install duvidnn[chem]`.")
+        raise ImportError("Chemprop not installed. Try `pip install aspect[chemprop]`.")
 
     if isinstance(extra_featurizers, str):
         extra_featurizers = [extra_featurizers]

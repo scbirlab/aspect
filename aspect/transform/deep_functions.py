@@ -6,7 +6,6 @@ from functools import partial
 from carabiner import cast, print_err
 import numpy as np
 from numpy.typing import ArrayLike
-import torch
 
 if TYPE_CHECKING:
     from transformers import PreTrainedTokenizerBase, PreTrainedModel
@@ -16,7 +15,9 @@ else:
 from .registry import register_function
 from ..typing import StrOrIterableOfStr
 
-_DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def get_device():
+    import torch
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def _index_into(x: ArrayLike, i: int):
@@ -32,32 +33,11 @@ def _get_value_from_tuple(f: Callable, **kwargs):
     return _f
 
 
-EMBEDDING_AGGREGATORS = {
-    "start": partial(_index_into, i=0),
-    "end": partial(_index_into, i=-1),
-    "sum": partial(torch.sum, dim=-2),
-    "mean": partial(torch.mean, dim=-2),
-    "median": _get_value_from_tuple(torch.median, dim=-2),
-    "max": _get_value_from_tuple(torch.max, dim=-2),
-}
-DEFAULT_AGGREGATOR = EMBEDDING_AGGREGATORS["mean"]
-
-
-def _aggregated_embedding(
-    x: torch.Tensor, 
-    aggregators: Iterable[Callable] = (DEFAULT_AGGREGATOR, )
-):
-    aggregated = [
-        a(x).detach().cpu().numpy() for a in aggregators
-    ]
-
-    return np.concatenate(aggregated, axis=-1)
-
-
 def _resolve_bart_model(ref: str) -> Tuple[PreTrainedTokenizerBase, PreTrainedModel]:
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+    import torch
     model = AutoModelForSeq2SeqLM.from_pretrained(ref)
-    return AutoTokenizer.from_pretrained(ref), torch.compile(model, fullgraph=True).to(_DEVICE)
+    return AutoTokenizer.from_pretrained(ref), torch.compile(model, fullgraph=True).to(get_device())
 
 
 def _tokenize_for_embedding(
@@ -85,7 +65,7 @@ def _tokenize_for_embedding(
         )
 
     return {
-        key: tokenized[key].to(_DEVICE) 
+        key: tokenized[key].to(get_device()) 
         for key in ['input_ids', 'attention_mask']
     }
 
@@ -95,6 +75,34 @@ def HfBART(
     ref: str,
     aggregator: StrOrIterableOfStr = "mean"
 ) -> np.ndarray:
+
+    try:
+        from transformers import PreTrainedTokenizerBase, PreTrainedModel
+    except ImportError:
+        raise ImportError("Hugging Face transformers not installed. Try `pip install aspect[deep]`.")
+    else:
+        import torch
+
+    EMBEDDING_AGGREGATORS = {
+        "start": partial(_index_into, i=0),
+        "end": partial(_index_into, i=-1),
+        "sum": partial(torch.sum, dim=-2),
+        "mean": partial(torch.mean, dim=-2),
+        "median": _get_value_from_tuple(torch.median, dim=-2),
+        "max": _get_value_from_tuple(torch.max, dim=-2),
+    }
+    DEFAULT_AGGREGATOR = EMBEDDING_AGGREGATORS["mean"]
+
+    def _aggregated_embedding(
+        x: torch.Tensor, 
+        aggregators: Iterable[Callable] = (DEFAULT_AGGREGATOR, )
+    ):
+        aggregated = [
+            a(x).detach().cpu().numpy() for a in aggregators
+        ]
+
+        return np.concatenate(aggregated, axis=-1)
+
 
     aggregators = [a.casefold() for a in cast(aggregator, to=list)]
     incorrect_agg = [

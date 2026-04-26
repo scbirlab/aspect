@@ -36,18 +36,18 @@ def _load_hf_dataset(checkpoint, filename) -> Union[Dataset, IterableDataset]:
 
 FILE_LOADING_CALLBACKS = {
     "json": _load_json,
-    "hf-dataset": _load_hf_dataset, 
-    "pt": _load_torch_weights,
+    "hf-dataset": _load_hf_dataset,
 }
 
 
 def load_checkpoint_file(
     checkpoint: str,
     filename: str,
+    *args, 
     callback: Union[str, Callable] = "json",
     none_on_error: bool = False,
     cache_dir: Optional[str] = None,
-    *args, **kwargs
+    **kwargs
 ) -> Union[Any, None]:
     from huggingface_hub import snapshot_download
 

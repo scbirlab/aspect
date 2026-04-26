@@ -4,7 +4,7 @@ version = "0.0.1"
 authors = [
   { name="Eachan Johnson", email="eachan.johnson@crick.ac.uk" },
 ]
-description = "Deep learning with uncertainty for general purpose, chemistry, and taxonomic tasks."
+description = "General purpose, chemistry, and taxonomic featurization of tabular data with caching."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
@@ -42,9 +42,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-chem = ["chemprop>=2.1.0", "schemist>=0.0.6", "scikit-learn>=1.7"]
+chem = ["schemist>=0.0.6"]
+chemprop = ["chemprop>=2.1.0"]
+deep = ["transformers"]
 bio = ["vectome>=0.0.4"]
-dev = ["aspect[chem,bio]", "pytest", "flake8"]
+dev = ["aspect[chem,bio]", "pytest>=7.4", "flake8"]
 
 [project.urls]
 "Homepage" = "https://github.com/scbirlab/aspect"
@@ -66,4 +68,4 @@ requires = ["setuptools>=43.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [test]
-deps = ["pytest>=7.4", "pytest-cov", "aspect[dev]"] 
+deps = ["pytest-cov", "aspect[dev]"] 

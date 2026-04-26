@@ -4,7 +4,7 @@ import os
 
 from platformdirs import user_cache_dir
 
-from .. import app_name, __author__, __version__
+from . import app_name, __author__, __version__
 
 CACHE_DIR = user_cache_dir(
     app_name,
@@ -12,7 +12,7 @@ CACHE_DIR = user_cache_dir(
     version=__version__,
 )
 
-ELUENT_CACHE = "ELUENT_CACHE"
+ELUENT_CACHE = "ASPECT_CACHE"
 DEFAULT_CACHE = CACHE_DIR
 
 def _get_data_path(

@@ -21,6 +21,8 @@ from .package_data import DEFAULT_CACHE
 DATASETS_PREFIX: str = "hf://datasets/"
 
 def hasher(s: str, n: int = 16) -> str:
+    if isinstance(s, str):
+        s = s.encode()
     return hashlib.sha256(s).hexdigest()[:n]
 
 def _lock_path(cache_dir: str, key: str) -> str:
@@ -78,7 +80,6 @@ def _load_from_file(filename: str, cache: Optional[str] = None) -> Dataset:
 
 
 def _load_from_dataframe(
-    cls,
     dataframe: Union[DataFrame, Mapping[str, ArrayLike], Iterable[Mapping[str, ArrayLike]]],
     cache: Optional[str] = None
 ) -> Dataset:
