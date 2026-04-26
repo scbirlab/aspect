@@ -212,7 +212,6 @@ class DataPipeline:
         self._version = _version
         self._app = _app
         self.column_transforms = self.canonicalize_transforms(self._column_transforms)
-        self._column_transforms_serialized = self.serialize_transforms(self.column_transforms)
         self.output_format = output_format
         self.output_format_opts = output_format_opts or {}
         self.data_in = None
@@ -239,7 +238,7 @@ class DataPipeline:
 
     @cached_property
     def column_transforms_serialized(self):
-        self.serialize_transforms(self.column_transforms)
+        return self.serialize_transforms(self.column_transforms)
 
     def _canonicalize_transforms(
         self,
@@ -461,7 +460,7 @@ class DataPipeline:
             .map(
                 self._featurize,
                 fn_kwargs={
-                    "column_transforms": self._column_transforms_serialized,
+                    "column_transforms": self.column_transforms_serialized,
                 },
                 batched=True,
                 batch_size=batch_size,
@@ -493,7 +492,7 @@ class DataPipeline:
     ):
         keys = {
             "kwargs": (
-                ("_column_transforms_serialized", "column_transforms"),
+                ("column_transforms_serialized", "column_transforms"),
                 "columns_to_keep",
                 "output_format",
                 "output_format_opts",

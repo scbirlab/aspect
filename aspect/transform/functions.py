@@ -171,7 +171,12 @@ def Hash(
         if normalize:
             n = np.linalg.norm(vectors, axis=-1, keepdims=True)
             nz = n > 0
-            vectors[nz[:, 0]] = vectors[nz[:, 0]] / n[nz]
+            vectors = np.divide(
+                vectors,
+                n,
+                out=np.zeros_like(vectors),
+                where=n > 0,
+            )
         return vectors
 
     return _hash

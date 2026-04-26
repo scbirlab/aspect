@@ -59,7 +59,8 @@ def _parse_feature_spec(x: str, i: int):
             parsed_kwargs[k] = parsed_v
         parsed_transforms.append({
             "name": name,
-        } | parsed_kwargs)
+            "kwargs": parsed_kwargs
+        })
     return extra, {output_col: (input_col, tuple(parsed_transforms))}
 
 
@@ -142,7 +143,7 @@ def _featurize(args: Namespace) -> None:
     from ..data import DataPipeline
     
     if args.features:
-        extras, column_transforms = _common_feature_spec_routine(args.features)
+        extras, column_transforms = _common_feature_spec_routine(args.features, args.extras)
         pipeline = DataPipeline(
             column_transforms=column_transforms,
             columns_to_keep=extras,
