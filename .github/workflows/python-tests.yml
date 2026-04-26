@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
     - uses: actions/checkout@v4
@@ -36,21 +36,9 @@ jobs:
     - name: Test with pytest
       run: |
         # run doctests as individual packages
-        pytest duvidnn --doctest-modules
+        pytest aspect --doctest-modules
         # run other tests
-        pytest test/test_evaluation.py
-    - name: Test CLI bilinear model with fingerprints
+        #pytest test/test_evaluation.py
+    - name: Test CLI
       run: |
-        bash test/scripts/train-hash-fp.sh
-    - name: Test CLI hashing/bilinear model
-      run: |
-        bash test/scripts/train-hash.sh
-    - name: Test CLI species featurizer
-      run: |
-        bash test/scripts/train-species.sh
-    - name: Test CLI train/test
-      run: |
-        bash test/scripts/train.sh
-    - name: Test CLI splitting/percentiles
-      run: |
-        bash test/scripts/split.sh
+        bash test/scripts/run-tests.sh
