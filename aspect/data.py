@@ -399,17 +399,17 @@ class DataPipeline:
 
     @staticmethod
     def _unsqueeze(
-        x: Mapping[str, ArrayLike]
+        x: Mapping[str, ArrayLike],
+        columns: Optional[Iterable[str]] = None
     ) -> Dict[str, np.ndarray]:
-        def _unsqueeze(x, columns=None):
-            columns = columns or x.keys()
-            for key in columns:
-                vals = x[key]
-                if not isinstance(vals, dict):
-                    vals = np.asarray(x[key])
-                    if vals.ndim == 1 and np.issubdtype(vals.dtype, np.number):
-                        x[key] = vals[:, None]
-            return x
+        columns = columns or x.keys()
+        for key in columns:
+            vals = x[key]
+            if not isinstance(vals, dict):
+                vals = np.asarray(x[key])
+                if vals.ndim == 1 and np.issubdtype(vals.dtype, np.number):
+                    x[key] = vals[:, None]
+        return x
 
     def __call__(
         self, 
@@ -477,6 +477,7 @@ class DataPipeline:
             .select_columns(all_output_columns)
             .map(
                 self._unsqueeze,
+                fn_kwargs={"columns": output_columns},
                 batched=True,
                 batch_size=batch_size,
                 desc="Unsqueezing",
