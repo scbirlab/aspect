@@ -148,7 +148,7 @@ pip install aspect
 Install chemistry support if you want SMILES featurisation via `schemist`:
 
 ```bash
-pip install "aspect[chem]"
+pip install "aspect-data[chem]"
 ```
 
 ### Chemprop support
@@ -156,7 +156,7 @@ pip install "aspect[chem]"
 Install Chemprop support if you want to prepare Chemprop-style molecular data:
 
 ```bash
-pip install "aspect[chemprop]"
+pip install "aspect-data[chemprop]"
 ```
 
 ### Taxonomic features
@@ -164,7 +164,7 @@ pip install "aspect[chemprop]"
 Install taxonomy support if you want species or taxon-ID features via `vectome`:
 
 ```bash
-pip install "aspect[bio]"
+pip install "aspect-data[bio]"
 ```
 
 ### Deep-learning features

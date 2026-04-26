@@ -26,7 +26,7 @@ class ColumnTransform:
     'affinity'
     >>> ct.name
     'log'
-    >>> ct.output_column.startswith("aspect/")
+    >>> ct.output_column.startswith("aspect-data/")
     True
 
     Output column is deterministic:
