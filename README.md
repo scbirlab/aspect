@@ -172,7 +172,7 @@ pip install "aspect-data[bio]"
 Install transformer support if you want Hugging Face model embeddings:
 
 ```bash
-pip install "aspect[deep]"
+pip install "aspect-data[deep]"
 ```
 
 ### Development installation
@@ -445,7 +445,7 @@ pipe = DataPipeline({
 Require:
 
 ```bash
-pip install "aspect[chem]"
+pip install "aspect-data[chem]"
 ```
 
 | Transform            |  Input |                   Output |
@@ -480,7 +480,7 @@ features = pipe(data, drop_unused_columns=True)
 Require:
 
 ```bash
-pip install "aspect[bio]"
+pip install "aspect-data[bio]"
 ```
 
 | Transform             |                    Input |                Output |
@@ -515,7 +515,7 @@ features = pipe(data)
 Require:
 
 ```bash
-pip install "aspect[deep]"
+pip install "aspect-data[deep]"
 ```
 
 | Transform | Input |                                    Output |
@@ -558,7 +558,7 @@ The model will be loaded through Hugging Face `transformers`, so the first run m
 Require:
 
 ```bash
-pip install "aspect[chemprop]"
+pip install "aspect-data[chemprop]"
 ```
 
 `chemprop-mol` is intended for converting SMILES into Chemprop-style molecular datapoints, with optional labels and extra dense features.
