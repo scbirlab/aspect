@@ -4,6 +4,8 @@
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/aspect-data)
 ![PyPI](https://img.shields.io/pypi/v/aspect-data)
 
+<img src="docs/source/_static/logo.svg" width="200">
+
 **aspect** is a lightweight featurisation layer for tabular machine-learning data.
 
 It lets you define independent feature pipelines for different input columns, then apply them to dictionaries, Pandas data frames, local files, Hugging Face datasets, or saved dataset checkpoints.
