@@ -92,23 +92,14 @@ def test_hf_source_records_resolved_revision(monkeypatch):
 
     dataset, source = (
         io._resolve_hf_hub_dataset(
-            "hf://datasets/"
-            "example/data"
-            "@main"
-            "~default"
-            ":train",
+            "hf://datasets/example/data@main~default:train"
         )
     )
 
     assert len(dataset) == 2
     assert source == io.DataSource(
-        uri=(
-            "hf://datasets/"
-            "example/data"
-            "@main"
-            "~default"
-            ":train"
-        ),
+        uri="hf://datasets/example/data@0123456789abcdef~default:train",
+        requested_uri="hf://datasets/example/data@main~default:train",
         revision=expected_revision,
         requested_revision="main",
     )

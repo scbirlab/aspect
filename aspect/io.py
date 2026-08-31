@@ -337,7 +337,7 @@ def _resolve_hf_hub_dataset(
     
     source = DataSource(
         uri=(
-            f"{DATASETS_PREFIX}/{repo}@{revision}" 
+            f"{DATASETS_PREFIX}{repo}@{revision}" 
             + ('~' + config if config is not None else '')
             + (':' + split if split is not None else '')
         ),
