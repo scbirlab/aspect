@@ -4,6 +4,8 @@
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/aspect-data)
 ![PyPI](https://img.shields.io/pypi/v/aspect-data)
 
+<img src="docs/source/_static/logo.svg" width="200">
+
 **aspect** is a lightweight featurisation layer for tabular machine-learning data.
 
 It lets you define independent feature pipelines for different input columns, then apply them to dictionaries, Pandas data frames, local files, Hugging Face datasets, or saved dataset checkpoints.
@@ -20,6 +22,15 @@ input table
 
 output dataset with named feature columns
 ```
+
+Aspect datasets store Arrow-compatible feature representations.
+
+Before model execution, an optional collator converts stored examples into
+runtime representations. A runtime batch is always a mapping from feature
+column names to batched values. Values may be tensors or structured mappings.
+
+Downstream model libraries should treat runtime batch values as opaque and
+should not perform dataset preprocessing or deserialization.
 
 ---
 

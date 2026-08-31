@@ -1,6 +1,6 @@
 [project]
 name = "aspect-data"
-version = "0.0.3.post1"
+version = "0.0.4"
 authors = [
   { name="Eachan Johnson", email="eachan.johnson@crick.ac.uk" },
 ]
@@ -44,10 +44,11 @@ dependencies = [
 
 [project.optional-dependencies]
 chem = ["schemist>=0.0.6"]
-chemprop = ["chemprop>=2.1.0"]
+torch = ["torch>=2.4"]
+chemprop = ["aspect-data[torch,chem]", "chemprop>=2.1.0"]
 deep = ["transformers"]
-bio = ["vectome>=0.0.4"]
-dev = ["aspect-data[chem,bio]", "pytest>=7.4", "flake8"]
+bio = ["vectome>=0.0.8"]
+dev = ["aspect-data[chemprop,bio]", "pytest>=7.4", "flake8"]
 
 [project.urls]
 "Homepage" = "https://github.com/scbirlab/aspect"
