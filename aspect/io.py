@@ -1,5 +1,6 @@
 
-from typing import TYPE_CHECKING, Any, Iterable, Mapping, Optional, Union
+from typing import TYPE_CHECKING, Any
+from collections.abc import Iterable, Mapping
 from functools import partial
 import hashlib
 import os
@@ -15,37 +16,61 @@ if TYPE_CHECKING:
 else:
     Dataset, DataFrame, IterableDataset = Any, Any, Any
 
-from .package_data import DEFAULT_CACHE
+from .package_data import resolve_cache, configure_hf_cache
 
 
 DATASETS_PREFIX: str = "hf://datasets/"
 
-def hasher(s: str, n: int = 16) -> str:
+def hasher(
+    s: str | bytes,
+    n: int = 16,
+) -> str:
     if isinstance(s, str):
-        s = s.encode()
+        s = s.encode("utf-8")
     return hashlib.sha256(s).hexdigest()[:n]
 
-def _lock_path(cache_dir: str, key: str) -> str:
+
+def _lock_path(
+    key: str,
+    cache_dir: str | None = None
+) -> str:
+    cache_dir = resolve_cache(cache_dir)
     locks_dir = os.path.join(cache_dir, ".locks")
     os.makedirs(locks_dir, exist_ok=True)
-    h = hasher(key.encode("utf-8"))
+    h = hasher(key)
     return os.path.join(locks_dir, f"{h}.lock")
 
 
-def _load_from_file(filename: str, cache: Optional[str] = None) -> Dataset:
+def _load_from_file(
+    filename: str, 
+    cache: str | None = None
+) -> Dataset:
+
+    cache, datasets_cache, _ = configure_hf_cache(cache)
     from datasets import load_dataset, Dataset, DatasetDict
     from filelock import FileLock
 
-    cache = cache or DEFAULT_CACHE
+    filename = os.path.realpath(
+        os.path.abspath(
+            os.path.expanduser(filename)
+        )
+    )
+
     if filename.removesuffix(".gz").endswith((".csv", ".tsv", ".txt")):
+        sep = "," if filename.endswith((".csv", ".csv.gz")) else "\t"
         read_f = partial(
             load_dataset,
             path="csv",
             data_files=filename,
-            cache_dir=cache,
-            sep="," if filename.endswith((".csv", ".csv.gz")) else "\t",
+            cache_dir=datasets_cache,
+            sep=sep,
         )
-        lock_key = ("csv", read_f.keywords.get('sep'))
+        lock_key = "::".join([
+            "file",
+            "csv",
+            filename,
+            sep,
+        ])
     elif filename.endswith((".arrow", ".hd5", ".json", ".parquet", ".xml")):
         _, ext = os.path.splitext(filename)
         protocol = ext.lstrip(".")
@@ -53,26 +78,29 @@ def _load_from_file(filename: str, cache: Optional[str] = None) -> Dataset:
             load_dataset,
             path=protocol,
             data_files=filename,
-            cache_dir=cache,
+            cache_dir=datasets_cache,
         )
-        lock_key = (protocol, "")
+        lock_key = "::".join([
+            "file",
+            protocol,
+            filename,
+        ])
     elif filename.endswith(".hf"):
-        read_f = partial(
-            Dataset.load_from_disk, 
-            dataset_path=filename,
-        )
-        lock_key = ("hf", "")
+        ds = Dataset.load_from_disk(filename)
+        if isinstance(ds, DatasetDict):
+            return ds["train"]
+        return ds
     else:
         raise IOError(f"Could not infer how to open '{filename}' from its extension.")
 
-    # If no cache, nothing sensible to lock on
-    if cache is None:
-        ds = read_f()
-
     # Cross-task lock on the shared filesystem
-    lockfile = _lock_path(cache, "_".join(lock_key))
+    lockfile = _lock_path(
+        key=lock_key,
+        cache_dir=cache, 
+    )
     with FileLock(lockfile, timeout=60. * 60.):
         ds = read_f()
+
     if isinstance(ds, DatasetDict):
         return ds["train"]
     else:
@@ -80,31 +108,62 @@ def _load_from_file(filename: str, cache: Optional[str] = None) -> Dataset:
 
 
 def _load_from_dataframe(
-    dataframe: Union[DataFrame, Mapping[str, ArrayLike], Iterable[Mapping[str, ArrayLike]]],
-    cache: Optional[str] = None
+    dataframe: DataFrame | Mapping[str, ArrayLike],
+    cache: str | None = None,
 ) -> Dataset:
-    from pandas import DataFrame
 
-    if cache is None:
-        cache = DEFAULT_CACHE
-        print_err(f"Defaulting to cache: {cache}")
+    cache, datasets_cache, _ = configure_hf_cache(cache)
+    from datasets import Dataset
+    from filelock import FileLock
+    from pandas import DataFrame
+    from pandas.util import hash_pandas_object
+
     if not isinstance(dataframe, DataFrame):
         dataframe = DataFrame(dataframe)
 
-    hash_name = hasher(dataframe.to_string())
-    with tempfile.TemporaryDirectory() as tmpdir:
-        csv_filename = os.path.join(tmpdir, f"{hash_name}.csv.gz")
-        dataframe.to_csv(csv_filename, index=False)
-        ds = _load_from_file(
-            csv_filename, 
-            cache=cache,
+    fingerprint = hashlib.sha256()
+    fingerprint.update(
+        repr([
+            (str(col), str(dtype))
+            for col, dtype in dataframe.dtypes.items()
+        ]).encode()
+    )
+    fingerprint.update(
+        dataframe.to_string(index=False).encode()
+    )
+    fingerprint = fingerprint.hexdigest()[:16]
+
+    csv_dir = os.path.join(cache, "dataframes")
+    csv_filename = f"{fingerprint}.parquet"
+    csv_path = os.path.join(csv_dir, csv_filename)
+    if os.path.exists(csv_path):
+        return _load_from_file(
+            filename=csv_path, 
+            cache=datasets_cache,
         )
+
+    lockfile = _lock_path(
+        key=f"dataframe::{fingerprint}",
+        cache_dir=csv_dir,
+    )
+    with FileLock(lockfile, timeout=60. * 60.):
+        if os.path.exists(csv_path):
+            return _load_from_file(
+                filename=csv_path, 
+                cache=datasets_cache,
+            )
+        dataframe.to_parquet(csv_path, index=False)
+        ds = _load_from_file(
+            filename=csv_path, 
+            cache=datasets_cache,
+        )
+
     return ds
 
 
 def _get_ref_chunk(
     s, 
-    sep: Optional[str] = None, 
+    sep: str | None = None, 
     all_seps: str = "@~:"
 ) -> str:
     if sep is not None:
@@ -119,23 +178,42 @@ def _get_ref_chunk(
 
 def _resolve_hf_hub_dataset(
     ref: str, 
-    cache: Optional[str] = None
+    cache: str | None = None
 ) -> Dataset:
+
+    cache, datasets_cache, _ = configure_hf_cache(cache)
     from datasets import concatenate_datasets, load_dataset, DatasetDict
+    from filelock import FileLock
 
     ref = ref.removeprefix(DATASETS_PREFIX).removeprefix("hf://")
     seps = "@~:"
+    repo = _get_ref_chunk(ref, all_seps=seps)
     ver = _get_ref_chunk(ref, "@", all_seps=seps)
     split = _get_ref_chunk(ref, ":", all_seps=seps)
     config = _get_ref_chunk(ref, "~", all_seps=seps)
     
-    ds = load_dataset(
-        path=_get_ref_chunk(ref, all_seps=seps), 
-        name=config, 
-        split=split, 
-        revision=ver, 
+    lock_key = "::".join([
+        "hf",
+        repo,
+        config or "",
+        ver or "",
+    ])
+    lockfile = _lock_path(
+        key=lock_key,
         cache_dir=cache,
     )
+
+    with FileLock(
+        lockfile,
+        timeout=60 * 60,
+    ):
+        ds = load_dataset(
+            path=repo, 
+            name=config, 
+            split=split, 
+            revision=ver, 
+            cache_dir=datasets_cache,
+        )
     if isinstance(ds, DatasetDict):
         ds = concatenate_datasets([v for key, v in ds.items()])
     return ds
@@ -149,9 +227,9 @@ class AutoDataset:
     @classmethod
     def load(
         cls, 
-        data: Union[str, DataFrame], 
-        cache: Optional[str] = None
-    ) -> Union[Dataset, IterableDataset]:
+        data: str | DataFrame, 
+        cache: str | None = None
+    ) -> Dataset | IterableDataset:
         from datasets import load_dataset, Dataset, IterableDataset
         from pandas import DataFrame
 

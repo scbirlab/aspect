@@ -453,7 +453,8 @@ class DataPipeline:
                 _fill_na,
                 fn_kwargs={
                     "types": {
-                        key: f.dtype 
+                        key: f.dtype if hasattr(f, "dtype") 
+                        else f.feature.dtype
                         for key, f in data_in.info.features.items()
                     },
                 },
