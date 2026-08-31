@@ -261,20 +261,32 @@ class DataPipeline:
         # A saved checkpoint config contains pipeline and source sections.
         if "pipeline" in config:
             config = config["pipeline"]
+        
+        config_keys = {
+            "column_transforms",
+            "columns_to_keep",
+            "output_format",
+            "output_format_opts",
+        }
+        if set(config) <= config_keys:
+            return cls(
+                column_transforms=config.get(
+                    "column_transforms",
+                ),
+                columns_to_keep=config.get(
+                    "columns_to_keep",
+                ),
+                output_format=config.get(
+                    "output_format",
+                    DEFAULT_FORMAT,
+                ),
+                output_format_opts=config.get(
+                    "output_format_opts",
+                ),
+                cache_dir=cache_dir,
+            )
         return cls(
-            column_transforms=config.get(
-                "column_transforms",
-            ),
-            columns_to_keep=config.get(
-                "columns_to_keep",
-            ),
-            output_format=config.get(
-                "output_format",
-                DEFAULT_FORMAT,
-            ),
-            output_format_opts=config.get(
-                "output_format_opts",
-            ),
+            column_transforms=config, 
             cache_dir=cache_dir,
         )
 
@@ -703,7 +715,7 @@ class DataPipeline:
         path = Path(path)
         config = load_json(path / CONFIG_FILENAME)
 
-        pipeline = cls.from_config(
+        pipeline = DataPipeline.from_config(
             config["pipeline"],
             cache_dir=cache_dir,
         )
@@ -746,5 +758,17 @@ class DataPipeline:
             )
 
         pipeline._data_loaded = pipeline.data_in is not None
-        pipeline._inspect_data_out()
+        if (
+            pipeline.data_out is not None
+            or pipeline.data_out_example is not None
+        ):
+            pipeline._inspect_data_out()
         return pipeline
+
+    # for compatibility
+    def save_checkpoint(self, *args, **kwargs):
+        return self.save(*args, **kwargs)
+
+    @classmethod
+    def load_checkpoint(cls, *args, **kwargs):
+        return cls.load(*args, **kwargs)

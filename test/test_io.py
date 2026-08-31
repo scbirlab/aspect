@@ -103,3 +103,22 @@ def test_hf_source_records_resolved_revision(monkeypatch):
         revision=expected_revision,
         requested_revision="main",
     )
+
+
+def test_config_only_checkpoint_roundtrip(tmp_path):
+    pipeline = DataPipeline({
+        "logx": [
+            "x",
+            "log",
+        ],
+    })
+
+    checkpoint = tmp_path / "pipeline"
+    pipeline.save(checkpoint)
+    restored = DataPipeline.load(checkpoint)
+
+    assert restored.to_config() == pipeline.to_config()
+
+    assert restored.data_in is None
+    assert restored.data_out is None
+    assert restored.data_out_example is None
