@@ -311,7 +311,7 @@ class DataPipeline:
         return config
 
     def clone(self):
-        return type(self).from_config(self.to_config)
+        return type(self).from_config(self.to_config())
 
     @cached_property
     def column_transforms_serialized(self):
@@ -804,7 +804,7 @@ class DataPipeline:
         *,
         batch_size: int = DEFAULT_DATALOADER_BATCH_SIZE,
         shuffle: bool = False,
-        collators: ColumnCollator | Mapping[str, Callable] | None = None,
+        collators: Mapping[str, Callable] | None = None,
         **kwargs
     ):
         """Create a PyTorch DataLoader from processed data."""
@@ -824,9 +824,9 @@ class DataPipeline:
 
         resolved_collators = dict(self.collators)
 
-        if collators is not None and isinstance(collators,  Mapping):
+        if isinstance(collators, Mapping):
             resolved_collators.update(dict(collators))
-        else:
+        elif collators is not None:
             raise ValueError(
                 "If provided, `collators` must be dict, "
                 f"but was {type(collators)}: {collators}"
@@ -835,6 +835,6 @@ class DataPipeline:
             dataset,
             batch_size=batch_size,
             shuffle=shuffle,
-            collate_fn=collators,
+            collate_fn=ColumnCollator(resolved_collators),
             **kwargs,
         )

@@ -49,3 +49,32 @@ def test_pipeline_dataloader_custom_collator():
     batch = next(iter(loader))
 
     assert isinstance(batch["x"], tuple)
+
+
+def test_dataloader_uses_discovered_collators():
+    pipeline = DataPipeline({
+        "molecule": (
+            "smiles",
+            "chemprop-mol",
+        ),
+    })
+
+    data = pipeline({
+        "smiles": [
+            "CCO",
+            "c1ccccc1",
+        ],
+    })
+
+    loader = pipeline.dataloader(
+        data,
+        batch_size=2,
+    )
+
+    batch = next(iter(loader))
+
+    assert set(batch["molecule"]) == {
+        "bmg",
+        "V_d",
+        "X_d",
+    }
