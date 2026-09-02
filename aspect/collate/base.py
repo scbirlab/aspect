@@ -16,7 +16,13 @@ class ColumnCollator:
         self,
         collators: Mapping[str, CollateFn] | None = None,
     ):
-        self.collators = collators or {}
+        collators = collators or {}
+        if not isinstance(collators, Mapping):
+            raise ValueError(
+                "If provided, `collators` must be a dict, "
+                f"but was {type(collators)}: {collators}"
+            )
+        self.collators = dict(collators)
 
     def __call__(
         self,

@@ -1,7 +1,7 @@
 """Data pipeline class."""
 
 from typing import TYPE_CHECKING, Any
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from functools import cached_property, partial
 import json
 import os
@@ -11,8 +11,10 @@ from carabiner import cast, print_err
 
 if TYPE_CHECKING:
     from datasets import Dataset, DatasetDict, IterableDataset
+    from .collate import ColumnCollator
 else:
     Dataset, DatasetDict, IterableDataset = Any, Any, Any
+    ColumnCollator = Any
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -772,3 +774,42 @@ class DataPipeline:
     @classmethod
     def load_checkpoint(cls, *args, **kwargs):
         return cls.load(*args, **kwargs)
+
+    def dataloader(
+        self,
+        dataset=None,
+        *,
+        batch_size: int = 32,
+        shuffle: bool = False,
+        collators: ColumnCollator | Mapping[str, Callable] | None = None,
+        **kwargs
+    ):
+        """Create a PyTorch DataLoader from processed data."""
+        # optional torch dependencies
+        from torch.utils.data import DataLoader
+
+        from .collate import ColumnCollator
+
+        if dataset is None:
+            dataset = self.data_out
+
+        if dataset is None:
+            raise ValueError(
+                "No processed dataset available. "
+                "Provide `dataset` or call the pipeline first with pipeline(data)."
+            )
+
+        if isinstance(collators,  Mapping) or collators is None:
+            collators = ColumnCollator(collators)
+        if not isinstance(collators, ColumnCollator):
+            raise ValueError(
+                "If provided, `collators` must be dict or ColumnCollator, "
+                f"but was {type(collators)}: {collators}"
+            )
+        return DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            collate_fn=collators,
+            **kwargs,
+        )
