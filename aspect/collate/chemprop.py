@@ -95,7 +95,7 @@ def chemprop_collate(
         raise ValueError("Cannot collate an empty Chemprop batch.")
 
     molgraphs = [
-        _molgraph_from_mapping(value["bmg"])
+        _molgraph_from_mapping(value["mg"])
         for value in values
     ]
     bmg = BatchMolGraph(molgraphs)

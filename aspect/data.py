@@ -1,29 +1,39 @@
 """Data pipeline class."""
 
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping, Tuple, Optional, Union
-
+from typing import TYPE_CHECKING, Any
+from collections.abc import Callable, Iterable, Mapping
 from functools import cached_property, partial
+import json
 import os
+from pathlib import Path
 
 from carabiner import cast, print_err
 
 if TYPE_CHECKING:
     from datasets import Dataset, DatasetDict, IterableDataset
+    from .collate import ColumnCollator
 else:
     Dataset, DatasetDict, IterableDataset = Any, Any, Any
+    ColumnCollator = Any
 
 import numpy as np
 from numpy.typing import ArrayLike
 
 from . import app_name, __version__
-from .checkpoint_utils import load_checkpoint_file, save_json
-from .io import AutoDataset
+from .io import AutoDataset, DataSource, autoload, save_json, load_json
 from .package_data import CACHE_DIR
-from .transform.base import ColumnTransform
+from .transform import ColumnTransform
 from .typing import DataLike, StrOrIterableOfStr
 
+
 DEFAULT_BATCH_SIZE: int = 1024
+DEFAULT_DATALOADER_BATCH_SIZE: int = 32
 DEFAULT_FORMAT: str = "numpy"
+CONFIG_FILENAME: str = "config.json"
+DATA_FILENAME: str = "data.parquet"
+TRANSFORMED_FILENAME: str = "transformed.parquet"
+EXAMPLE_FILENAME: str = "example.parquet"
+
 
 def _check_column_presence(
     features: StrOrIterableOfStr,
@@ -45,7 +55,7 @@ def _check_column_presence(
 def _check_is_calculated(
     x: Dataset,  
     column_transform: ColumnTransform
-) -> Tuple[str, bool]:
+) -> tuple[str, bool]:
     """Check named column is in dataset.
 
     Examples
@@ -73,7 +83,7 @@ def _check_is_calculated(
 def _fill_na(
     x: Mapping[str, Any],
     types: Mapping[str, Any]
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Fill missing values with typed missing.
 
     For example, numeric filled with zeros, and strings filled with `""`.
@@ -196,11 +206,11 @@ class DataPipeline:
     """
     def __init__(
         self,
-        column_transforms: Optional[Iterable[Union[str, ColumnTransform]]] = None,
-        columns_to_keep: Optional[Iterable[Union[str, ColumnTransform]]] = None,
+        column_transforms: Iterable[str | ColumnTransform] | None = None,
+        columns_to_keep: Iterable[str | ColumnTransform] | None = None,
         output_format: str = DEFAULT_FORMAT,
-        output_format_opts: Optional[Mapping[str, Any]] = None,
-        cache_dir: Optional[str] = None,
+        output_format_opts: Mapping[str, Any] | None = None,
+        cache_dir: str | None = None,
         _version: str = __version__,
         _app: str = app_name
     ):
@@ -215,19 +225,17 @@ class DataPipeline:
         self.output_format = output_format
         self.output_format_opts = output_format_opts or {}
         self.data_in = None
+        self.data_source = None
         self.data_out = None
         self.data_out_example = None
         self.data_out_shape = None
         self.cache_dir = cache_dir or CACHE_DIR
-        self._data_in_filename = "data-in.hf"
-        self._data_out_filename = "data-out.hf"
-        self._data_out_example_filename = "data-out-example.hf"
         self._data_loaded = False
-        self._config_filename = "config.json"
 
-        self._inspect_data_out()
+        if self.data_out is not None or self.data_out_example is not None:
+            self._inspect_data_out()
 
-    def __eq__(self, other):
+    def __eq__(self, other) -> bool:
         if hasattr(other, "column_transforms_serialized"):
             return all([
                 self.column_transforms_serialized == other.column_transforms_serialized,
@@ -236,15 +244,84 @@ class DataPipeline:
         else:
             raise ValueError(f"Cannot compare {type(self)} with {type(other)}.")
 
+    @classmethod
+    def from_config(
+        cls,
+        config: Mapping[str, Any] | str,
+        *,
+        cache_dir: str | None = None
+    ) -> "DataPipeline":
+        """Construct a DataPipeline from config or a JSON filename."""
+        if isinstance(config, str):
+            if not os.path.exists(config):
+                raise FileNotFoundError(
+                    "`config` was a string, but no file "
+                    f"called `{config}` was found."
+                )
+
+            config = load_json(config)
+        config = dict(config)
+        # A saved checkpoint config contains pipeline and source sections.
+        if "pipeline" in config:
+            config = config["pipeline"]
+        
+        config_keys = {
+            "column_transforms",
+            "columns_to_keep",
+            "output_format",
+            "output_format_opts",
+        }
+        if set(config) <= config_keys:
+            return cls(
+                column_transforms=config.get(
+                    "column_transforms",
+                ),
+                columns_to_keep=config.get(
+                    "columns_to_keep",
+                ),
+                output_format=config.get(
+                    "output_format",
+                    DEFAULT_FORMAT,
+                ),
+                output_format_opts=config.get(
+                    "output_format_opts",
+                ),
+                cache_dir=cache_dir,
+            )
+        return cls(
+            column_transforms=config, 
+            cache_dir=cache_dir,
+        )
+
+    def to_config(
+        self,
+        filename: str | os.PathLike | None = None,
+    ) -> dict[str, Any]:
+        """Return JSON-compatible constructor configuration."""
+        config = {
+            "column_transforms": self.column_transforms_serialized,
+            "columns_to_keep": self.columns_to_keep,
+            "output_format": self.output_format,
+            "output_format_opts": self.output_format_opts,
+        }
+        # Round-trip through JSON
+        config = json.loads(json.dumps(config))
+        if filename is not None:
+            save_json(config, str(filename))
+        return config
+
+    def clone(self):
+        return type(self).from_config(self.to_config())
+
     @cached_property
     def column_transforms_serialized(self):
         return self.serialize_transforms(self.column_transforms)
 
     def _canonicalize_transforms(
         self,
-        column_transforms: Iterable[Union[str, Mapping, ColumnTransform]],
-        input_column: Optional[str] = None
-    ) -> Tuple[ColumnTransform]:
+        column_transforms: Iterable[str | Mapping | ColumnTransform],
+        input_column: str | None = None
+    ) -> tuple[ColumnTransform]:
         if isinstance(column_transforms, (str, dict, ColumnTransform)):
             column_transforms = [column_transforms]
         out = []
@@ -288,9 +365,9 @@ class DataPipeline:
 
     def canonicalize_transforms(
         self,
-        column_transforms: Union[Mapping, Iterable],
-        input_column: Optional[str] = None
-    ) -> Dict[str, ColumnTransform]:
+        column_transforms: Mapping[str, Any] | Iterable,
+        input_column: str | None = None
+    ) -> dict[str, ColumnTransform]:
         if isinstance(column_transforms, (list, tuple)):
             if len(column_transforms) == 0:
                 return {}
@@ -337,43 +414,52 @@ class DataPipeline:
     def serialize_transforms(
         self, 
         column_transforms: Mapping[str, ColumnTransform]
-    ) -> Dict[str, Tuple[dict]]:
+    ) -> dict[str, tuple[dict]]:
             return {k: tuple(t.to_dict() for t in v) for k, v in column_transforms.items()}
 
     def _inspect_data_out(self) -> None:
-        if self.data_out is not None:
-            self.data_out = self.data_out.with_format(
-                self.output_format, 
-                **self.output_format_opts,
-            )
-            self.data_out_example = (
-                self.data_out
-                .take(1)
-            )
-            first_item = self.data_out_example.with_format("numpy")[:1]
-            self.data_out_shape = {
-                col: first_item[col].shape[1:]
-                if not isinstance(first_item[col], dict)
-                else {
-                    k: v.shape[1:] if v is not None else None 
-                    for k, v in first_item[col].items()
-                }
-                for col in self.data_out_example.column_names
+        if self.data_out_example is None:
+            if self.data_out is not None:
+                self.data_out = self.data_out.with_format(
+                    self.output_format, 
+                    **self.output_format_opts,
+                )
+                self.data_out_example = (
+                    self.data_out
+                    .take(1)
+                )
+            else:
+                raise AttributeError("Cannot inspect data without loading data or having an example")
+        
+        first_item = self.data_out_example.with_format("numpy")[:1]
+        self.data_out_shape = {
+            col: first_item[col].shape[1:]
+            if not isinstance(first_item[col], dict)
+            else {
+                k: v.shape[1:] if v is not None else None 
+                for k, v in first_item[col].items()
             }
+            for col in self.data_out_example.column_names
+        }
         return None
 
     def _resolve_data(
         self,
         data: DataLike, 
-        cache_dir: Optional[str] = None
-    ) -> Union[Dataset, IterableDataset]:
-        return AutoDataset.load(data, cache=cache_dir or self.cache_dir)._dataset
+        cache_dir: str | None = None
+    ) -> Dataset | IterableDataset:
+        resolved = AutoDataset.load(
+            data, 
+            cache=cache_dir or self.cache_dir,
+        )
+        self.data_source = resolved.source
+        return resolved._dataset
 
     @staticmethod
     def _featurize(
         x: Mapping[str, ArrayLike],
         column_transforms: Mapping[str, dict]
-    ) -> Dict[str, np.ndarray]:
+    ) -> dict[str, np.ndarray]:
 
         column_transforms = {
             k: [ColumnTransform(**d) for d in v]
@@ -400,8 +486,8 @@ class DataPipeline:
     @staticmethod
     def _unsqueeze(
         x: Mapping[str, ArrayLike],
-        columns: Optional[Iterable[str]] = None
-    ) -> Dict[str, np.ndarray]:
+        columns: Iterable[str] | None = None
+    ) -> dict[str, np.ndarray]:
         columns = columns or x.keys()
         for key in columns:
             vals = x[key]
@@ -416,7 +502,7 @@ class DataPipeline:
         dataset: DataLike, 
         batch_size: int = DEFAULT_BATCH_SIZE,
         drop_unused_columns: bool = False,
-        keep_extra_columns: Optional[Iterable[str]] = None
+        keep_extra_columns: Iterable[str] | None = None
     ):
         data_in = self._resolve_data(dataset)
         input_columns = sorted(set(
@@ -490,93 +576,296 @@ class DataPipeline:
         self._inspect_data_out()
         return self.data_out
 
-    def save_checkpoint(
-        self, 
-        checkpoint_dir: str,
-        skip_data_in: bool = False,
-        skip_data_out: bool = False
-    ):
-        keys = {
-            "kwargs": (
-                ("column_transforms_serialized", "column_transforms"),
-                "columns_to_keep",
-                "output_format",
-                "output_format_opts",
-            ),
-            "state": (
-                "_column_transforms",
-                "data_out_shape",
-                "_data_in_filename",
-                "_data_out_filename",
-                "_data_out_example_filename",
-                "_data_loaded",
-                "_config_filename",
-                "_version",
-                "_app",
-            ),
-        }
-        data_config = {
-            section: {
-                (key if isinstance(key, str) else key[1]): getattr(
-                    self, 
-                    (key if isinstance(key, str) else key[0]),
-                ) 
-                for key in section_keys
-            }
-            for section, section_keys in keys.items()
-        }
-        os.makedirs(checkpoint_dir, exist_ok=True)
-        if self.data_in is not None and not skip_data_in:
-            self.data_in.save_to_disk(
-                os.path.join(checkpoint_dir, self._data_in_filename),
+    def save(
+        self,
+        path: str | os.PathLike,
+        *,
+        save_transformed_columns: Iterable[str] | bool | None = None,
+        save_source_data: bool | None = None,
+        discard_example_data: bool = False
+    ) -> None:
+        """Save the pipeline and required training-data artefacts.
+
+        Parameters
+        ==========
+        path
+            Checkpoint directory.
+        retain_columns
+            Processed columns that must be retained with the checkpoint.
+            This is intended for downstream methods that require access to
+            exact training representations.
+        package_source
+            Whether to embed the input dataset.
+
+            ``None`` chooses automatically: immutable remote sources are
+            referenced, while local or ephemeral sources are packaged.
+
+            ``True`` always packages the resolved input data.
+
+            ``False`` never packages it.
+        retain_example
+            Save one processed example when available.
+        """
+        path = Path(path)
+        path.mkdir(parents=True, exist_ok=True)
+
+        if self.data_source is None:
+            source = DataSource()
+        else:
+            source = self.data_source
+
+        if save_source_data is None:
+            save_source_data = all([
+                self.data_in is not None,
+                not source.is_remote,
+            ])
+
+        if save_source_data and self.data_in is None:
+            raise ValueError(
+                "Cannot package the data source because this "
+                "`DataPipeline` has not loaded any input data."
             )
-        if self.data_out is not None and not skip_data_out:
+
+        if save_transformed_columns is None or save_transformed_columns is False:
+            save_transformed_columns = []
+        elif isinstance(save_transformed_columns, (tuple, list)):
+            save_transformed_columns = list(save_transformed_columns)
+        elif not save_transformed_columns is True:
+            raise ValueError(
+                "`save_transformed_columns` must be None, True, False, tuple, list "
+                f"but was {type(save_transformed_columns)}: {save_transformed_columns}"
+            )
+        else:
+            pass
+
+        if all([
+            save_transformed_columns or len(save_transformed_columns) > 0,
+            self.data_out is None,
+        ]):
+            raise ValueError(
+                "Cannot retain processed columns because this "
+                "DataPipeline has not processed any data."
+            )
+
+        if save_transformed_columns is True:
+            save_transformed_columns = list(self.data_out.column_names)
+
+        if self.data_out is not None:
+            missing = [
+                column
+                for column in save_transformed_columns
+                if column not in self.data_out.column_names
+            ]
+        else:
+            missing = []
+
+        if len(missing) > 0:
+            raise KeyError(
+                "Requested retained columns are absent from "
+                "processed data: "
+                + ", ".join(missing)
+            )
+
+        checkpoint_config = {
+            "pipeline": self.to_config(),
+            "source": source.to_config(),
+            "artefacts": {
+                "source_data": DATA_FILENAME if save_source_data else None,
+                "transformed_data": TRANSFORMED_FILENAME if len(save_transformed_columns) > 0 else None,
+                "example": (
+                    EXAMPLE_FILENAME
+                    if (
+                        not discard_example_data
+                        and self.data_out_example is not None
+                    )
+                    else None
+                ),
+            },
+        }
+
+        save_json(checkpoint_config, str(path / CONFIG_FILENAME))
+
+        if save_source_data:
+            (
+                self.data_in
+                .with_format(None)
+                .to_parquet(str(path / DATA_FILENAME))
+            )
+
+        if len(save_transformed_columns) > 0:
             (
                 self.data_out
-                .save_to_disk(os.path.join(checkpoint_dir, self._data_out_filename)),
+                .with_format(None)
+                .select_columns(save_transformed_columns)
+                .to_parquet(str(path / TRANSFORMED_FILENAME))
             )
-            if self.data_out_example is not None:
-                (
-                    self.data_out_example
-                    .save_to_disk(os.path.join(checkpoint_dir, self._data_out_example_filename)),
-                )
-        save_json(data_config, os.path.join(checkpoint_dir, self._config_filename))
-        return None
 
-    def load_checkpoint(
-        self, 
-        checkpoint: str,
-        skip_data_in: bool = False,
-        skip_data_out: bool = False,
-        cache_dir: Optional[str] = None
-    ):
-        cache_dir = cache_dir or self.cache_dir
-        data_config = load_checkpoint_file(
-            checkpoint, 
-            filename=self._config_filename,
-            callback="json",
-            none_on_error=False,
+        if (
+            not discard_example_data
+            and self.data_out_example is not None
+        ):
+            (
+                self.data_out_example
+                .with_format(None)
+                .to_parquet(str(path / EXAMPLE_FILENAME))
+            )
+
+    @classmethod
+    def load(
+        cls,
+        path: str | os.PathLike,
+        *,
+        cache_dir: str | None = None,
+    ) -> "DataPipeline":
+        """Restore a saved pipeline and its available data artefacts."""
+        path = Path(path)
+        config = load_json(path / CONFIG_FILENAME)
+
+        pipeline = DataPipeline.from_config(
+            config["pipeline"],
             cache_dir=cache_dir,
         )
-        self.__init__(**data_config["kwargs"], cache_dir=cache_dir)
-        for key, val in data_config["state"].items():
-            setattr(self, key, val)
-        if self._data_loaded:
-            if not skip_data_in and self._data_loaded:
-                self.data_in = load_checkpoint_file(
-                    checkpoint, 
-                    filename=self._data_in_filename,
-                    callback="hf-dataset",
-                    none_on_error=True,
-                    cache_dir=cache_dir,
-                )
-            if not skip_data_out:
-                self.data_out = load_checkpoint_file(
-                    checkpoint, 
-                    filename=self._data_out_filename,
-                    callback="hf-dataset",
-                    none_on_error=True,
-                    cache_dir=cache_dir,
-                )
-            self._inspect_data_out()
-        return self
+        pipeline.data_source = (
+            DataSource.from_config(
+                config.get("source")
+            )
+        )
+
+        artefacts = config.get("artefacts", {})
+        data_filename = artefacts.get("source_data")
+        retained_filename = artefacts.get("transformed_data")
+        example_filename = artefacts.get("example")
+
+        if data_filename is not None:
+            pipeline.data_in = autoload(
+                path / data_filename,
+                cache_dir=pipeline.cache_dir,
+            )
+        elif (
+            pipeline.data_source is not None
+            and pipeline.data_source.is_remote
+        ):
+            source = pipeline.data_source
+            pipeline.data_in = autoload(
+                pipeline.data_source.uri,
+                cache=pipeline.cache_dir,
+            )
+
+        if retained_filename is not None:
+            pipeline.data_out = autoload(
+                path / retained_filename,
+                cache_dir=pipeline.cache_dir,
+            )
+
+        if example_filename is not None:
+            pipeline.data_out_example = autoload(
+                path / example_filename,
+                cache_dir=pipeline.cache_dir,
+            )
+
+        pipeline._data_loaded = pipeline.data_in is not None
+        if (
+            pipeline.data_out is not None
+            or pipeline.data_out_example is not None
+        ):
+            pipeline._inspect_data_out()
+        return pipeline
+
+    # for compatibility
+    def save_checkpoint(self, *args, **kwargs):
+        return self.save(*args, **kwargs)
+
+    @classmethod
+    def load_checkpoint(cls, *args, **kwargs):
+        return cls.load(*args, **kwargs)
+
+    @property
+    def collators(self) -> dict[str, Callable]:
+        """Runtime collators required by transformed output columns."""
+        from .transform.registry import COLLATOR_REGISTRY
+        from .collate import resolve_collator
+
+        out = {}
+        for column, transforms in self.column_transforms.items():
+            if len(transforms) == 0:
+                continue
+            final_transform = transforms[-1]
+            try:
+                collator_path = COLLATOR_REGISTRY[final_transform.name]
+            except KeyError:
+                continue
+
+            out[column] = resolve_collator(collator_path)
+        return out
+
+
+    def _resolve_collators(
+        self,
+        collators: Mapping[str, Callable] | None = None
+    ):
+        from .collate import ColumnCollator
+
+        resolved_collators = dict(self.collators)
+
+        if isinstance(collators, Mapping):
+            resolved_collators.update(dict(collators))
+        elif collators is not None:
+            raise ValueError(
+                "If provided, `collators` must be dict, "
+                f"but was {type(collators)}: {collators}"
+            )
+        return ColumnCollator(resolved_collators)
+
+    def collate(
+        self,
+        batch,
+        *,
+        collators: Mapping[str, Callable] | None = None,
+    ):
+        """Convert a batch of dataset values to runtime model inputs."""
+
+        if isinstance(batch, Mapping):
+            if len(batch) == 0:
+                return {}
+
+            n = len(next(iter(batch.values())))
+            batch = [
+                {
+                    column: values[i]
+                    for column, values
+                    in batch.items()
+                }
+                for i in range(n)
+            ]
+        return self._resolve_collators(collators)(batch)
+
+    def dataloader(
+        self,
+        dataset=None,
+        *,
+        batch_size: int = DEFAULT_DATALOADER_BATCH_SIZE,
+        shuffle: bool = False,
+        collators: Mapping[str, Callable] | None = None,
+        **kwargs
+    ):
+        """Create a PyTorch DataLoader from processed data."""
+        # optional torch dependencies
+        from torch.utils.data import DataLoader
+
+        if dataset is None:
+            dataset = self.data_out
+
+        if dataset is None:
+            raise ValueError(
+                "No processed dataset available. "
+                "Provide `dataset` or call the pipeline first with pipeline(data)."
+            )
+
+        
+        return DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            collate_fn=self._resolve_collators(collators),
+            **kwargs,
+        )

@@ -1,10 +1,12 @@
 
 from typing import TYPE_CHECKING, Any
 from collections.abc import Iterable, Mapping
+from copy import deepcopy
+from dataclasses import asdict, dataclass
 from functools import partial
+import json
 import hashlib
 import os
-import tempfile
 
 from carabiner import print_err
 
@@ -20,6 +22,102 @@ from .package_data import resolve_cache, configure_hf_cache
 
 
 DATASETS_PREFIX: str = "hf://datasets/"
+
+
+def load_json(
+    checkpoint: str, 
+    filename: str | None = None
+) -> dict[str, ...]:
+    if filename is not None:
+        path = os.path.join(checkpoint, filename)
+    else:
+        path = checkpoint
+    with open(path, "r") as f:
+        obj = json.load(f)
+    return obj
+   
+
+def save_json(obj, filename: str) -> None:
+    _dir = os.path.dirname(filename)
+    if _dir != "." and len(_dir) > 0:
+        os.makedirs(_dir, exist_ok=True)
+    with open(filename, "w") as f:
+        try:
+            json.dump(obj, f, sort_keys=True, indent=4)
+        except TypeError as e:
+            print_err(f"{obj=}")
+            raise e
+    return None
+
+
+def autoload(
+    filename: str | os.PathLike,
+    cache_dir: str | None = None
+):
+    return (
+        AutoDataset
+        .load(
+            str(filename),
+            cache=cache_dir,
+        )
+        ._dataset
+    )
+
+
+@dataclass(frozen=True)
+class DataSource:
+    """Provenance for a resolved dataset.
+
+    Parameters
+    ----------
+    uri
+        Original source URI or absolute local filename, when available.
+    revision
+        Immutable resolved source revision, when available.
+    requested_revision
+        Revision requested by the caller before resolution, when available.
+    """
+
+    uri: str | None = None
+    requested_uri: str | None = None
+    revision: str | None = None
+    requested_revision: str | None = None
+
+    @classmethod
+    def from_config(
+        cls,
+        config: Mapping[str, str | None] | str
+    ):
+        if isinstance(config, str):
+            if os.path.exists(config):
+                config = load_json(config)
+            else:
+                raise FileNotFoundError(
+                    "`config` was string, but filename "
+                    f"called `{config}` not found."
+                )
+
+        config = deepcopy(dict(config))
+        return cls(**config)
+
+    def to_config(self, filename: str | None = None) -> dict[str, str | None]:
+        config = asdict(self)
+        if filename is not None:
+            save_json(config, filename)
+        return config
+
+    @property
+    def is_remote(self) -> bool:
+        return all([
+            self.uri is not None
+            and self.uri.startswith((
+                "hf://", 
+                "https://", 
+                "s3://",
+            )),
+            self.revision is not None,
+        ])
+
 
 def hasher(
     s: str | bytes,
@@ -176,6 +274,20 @@ def _get_ref_chunk(
     return s
 
 
+def _resolve_hf_revision(
+    repo: str,
+    revision: str | None = None
+) -> str:
+    """Resolve a Hugging Face dataset revision to an immutable commit SHA."""
+    from huggingface_hub import HfApi
+
+    info = HfApi().dataset_info(
+        repo_id=repo,
+        revision=revision,
+    )
+    return info.sha
+
+
 def _resolve_hf_hub_dataset(
     ref: str, 
     cache: str | None = None
@@ -185,18 +297,24 @@ def _resolve_hf_hub_dataset(
     from datasets import concatenate_datasets, load_dataset, DatasetDict
     from filelock import FileLock
 
+    original_ref = ref
     ref = ref.removeprefix(DATASETS_PREFIX).removeprefix("hf://")
     seps = "@~:"
     repo = _get_ref_chunk(ref, all_seps=seps)
-    ver = _get_ref_chunk(ref, "@", all_seps=seps)
+    requested_revision = _get_ref_chunk(ref, "@", all_seps=seps)
     split = _get_ref_chunk(ref, ":", all_seps=seps)
     config = _get_ref_chunk(ref, "~", all_seps=seps)
+
+    revision = _resolve_hf_revision(
+        repo=repo,
+        revision=requested_revision,
+    )
     
     lock_key = "::".join([
         "hf",
         repo,
         config or "",
-        ver or "",
+        revision,
     ])
     lockfile = _lock_path(
         key=lock_key,
@@ -211,46 +329,67 @@ def _resolve_hf_hub_dataset(
             path=repo, 
             name=config, 
             split=split, 
-            revision=ver, 
+            revision=revision, 
             cache_dir=datasets_cache,
         )
     if isinstance(ds, DatasetDict):
         ds = concatenate_datasets([v for key, v in ds.items()])
-    return ds
+    
+    source = DataSource(
+        uri=(
+            f"{DATASETS_PREFIX}{repo}@{revision}" 
+            + ('~' + config if config is not None else '')
+            + (':' + split if split is not None else '')
+        ),
+        requested_uri=original_ref,
+        revision=revision,
+        requested_revision=requested_revision,
+    )
+
+    return ds, source
 
 
 class AutoDataset:
 
-    def __init__(self, dataset):
+    def __init__(
+        self, 
+        dataset: Dataset,
+        source: DataSource | None = None
+    ):
         self._dataset = dataset
+        self.source = source or DataSource()
 
     @classmethod
     def load(
         cls, 
         data: str | DataFrame, 
         cache: str | None = None
-    ) -> Dataset | IterableDataset:
+    ) -> "AutoDataset":
         from datasets import load_dataset, Dataset, IterableDataset
         from pandas import DataFrame
 
         if isinstance(data, (Dataset, IterableDataset)):
             dataset = data
+            source = None
         elif isinstance(data, (DataFrame, Mapping)):
             dataset = _load_from_dataframe(
                 data, 
                 cache=cache,
             )
+            source = None
         elif isinstance(data, str):
             if data.startswith("hf://"):
-                dataset = _resolve_hf_hub_dataset(
+                dataset, source = _resolve_hf_hub_dataset(
                     data,
                     cache=cache,
                 )
             elif os.path.exists(data):
+                filename = os.path.realpath(os.path.abspath(os.path.expanduser(data)))
                 dataset = _load_from_file(
-                    data,
+                    filename,
                     cache=cache,
                 )
+                source = DataSource(uri=filename)
             else:
                 raise ValueError(
                     f"""
@@ -264,4 +403,7 @@ class AutoDataset:
                 Data must be a string, Dataset, dictionary, or Pandas DataFrame.
                 """
             )
-        return cls(dataset)
+        return cls(
+            dataset=dataset,
+            source=source,
+        )
