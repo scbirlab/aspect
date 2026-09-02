@@ -28,7 +28,7 @@ def test_chemprop_collate_graphs():
     smiles = ["CCO", "CCN", "CCC"]
     values = [
         {
-            "bmg": _cached_molgraph(s),
+            "mg": _cached_molgraph(s),
             "V_d": None,
             "X_d": None,
         }
@@ -60,12 +60,12 @@ def test_chemprop_collate_graphs():
 def test_chemprop_collate_X_d():
     values = [
         {
-            "bmg": _cached_molgraph("CCO"),
+            "mg": _cached_molgraph("CCO"),
             "V_d": None,
             "X_d": [1., 2.],
         },
         {
-            "bmg": _cached_molgraph("CCN"),
+            "mg": _cached_molgraph("CCN"),
             "V_d": None,
             "X_d": [3., 4.],
         },
@@ -86,12 +86,12 @@ def test_chemprop_collate_X_d():
 def test_chemprop_collate_rejects_mixed_optional_values():
     values = [
         {
-            "bmg": _cached_molgraph("CCO"),
+            "mg": _cached_molgraph("CCO"),
             "V_d": None,
             "X_d": [1., 2.],
         },
         {
-            "bmg": _cached_molgraph("CCN"),
+            "mg": _cached_molgraph("CCN"),
             "V_d": None,
             "X_d": None,
         },

@@ -1,7 +1,7 @@
+from aspect import DataPipeline
+
 def test_pipeline_dataloader():
     import torch
-
-    from aspect import DataPipeline
 
     pipeline = DataPipeline({"x": ("value", "identity")})
 
@@ -26,7 +26,6 @@ def test_pipeline_dataloader():
 
 
 def test_pipeline_dataloader_custom_collator():
-    from aspect import DataPipeline
 
     pipeline = DataPipeline({"x": ("value", "identity")})
 

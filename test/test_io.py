@@ -106,6 +106,7 @@ def test_hf_source_records_resolved_revision(monkeypatch):
 
 
 def test_config_only_checkpoint_roundtrip(tmp_path):
+    from aspect import DataPipeline
     pipeline = DataPipeline({
         "logx": [
             "x",

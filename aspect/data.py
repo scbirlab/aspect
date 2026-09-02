@@ -798,6 +798,47 @@ class DataPipeline:
             out[column] = resolve_collator(collator_path)
         return out
 
+
+    def _resolve_collators(
+        self,
+        collators: Mapping[str, Callable] | None = None
+    ):
+        from .collate import ColumnCollator
+
+        resolved_collators = dict(self.collators)
+
+        if isinstance(collators, Mapping):
+            resolved_collators.update(dict(collators))
+        elif collators is not None:
+            raise ValueError(
+                "If provided, `collators` must be dict, "
+                f"but was {type(collators)}: {collators}"
+            )
+        return ColumnCollator(resolved_collators)
+
+    def collate(
+        self,
+        batch,
+        *,
+        collators: Mapping[str, Callable] | None = None,
+    ):
+        """Convert a batch of dataset values to runtime model inputs."""
+
+        if isinstance(batch, Mapping):
+            if len(batch) == 0:
+                return {}
+
+            n = len(next(iter(batch.values())))
+            batch = [
+                {
+                    column: values[i]
+                    for column, values
+                    in batch.items()
+                }
+                for i in range(n)
+            ]
+        return self._resolve_collators(collators)(batch)
+
     def dataloader(
         self,
         dataset=None,
@@ -811,8 +852,6 @@ class DataPipeline:
         # optional torch dependencies
         from torch.utils.data import DataLoader
 
-        from .collate import ColumnCollator
-
         if dataset is None:
             dataset = self.data_out
 
@@ -822,19 +861,11 @@ class DataPipeline:
                 "Provide `dataset` or call the pipeline first with pipeline(data)."
             )
 
-        resolved_collators = dict(self.collators)
-
-        if isinstance(collators, Mapping):
-            resolved_collators.update(dict(collators))
-        elif collators is not None:
-            raise ValueError(
-                "If provided, `collators` must be dict, "
-                f"but was {type(collators)}: {collators}"
-            )
+        
         return DataLoader(
             dataset,
             batch_size=batch_size,
             shuffle=shuffle,
-            collate_fn=ColumnCollator(resolved_collators),
+            collate_fn=self._resolve_collators(collators),
             **kwargs,
         )

@@ -96,3 +96,39 @@ def test_pipeline_discovers_registered_collator(monkeypatch):
     })
 
     assert pipeline.collators["x"] is list
+
+
+def test_pipeline_collate():
+    from aspect import DataPipeline
+    pipeline = DataPipeline({
+        "x": ("x_raw", "identity"),
+    })
+    data = pipeline({
+        "x_raw": [
+            [1., 2.],
+            [3., 4.],
+        ],
+    })
+    batch = pipeline.collate(data[:])
+
+    assert batch["x"].shape == (2, 2)
+
+
+def test_pipeline_collate_chemprop():
+    from aspect import DataPipeline
+    pipeline = DataPipeline({
+        "molecule": ("smiles", "chemprop-mol"),
+    })
+    data = pipeline({
+        "smiles": [
+            "CCO",
+            "c1ccccc1",
+        ],
+    })
+    batch = pipeline.collate(data[:])
+
+    assert set(batch["molecule"]) == {
+        "bmg",
+        "V_d",
+        "X_d",
+    }
