@@ -1,17 +1,23 @@
-"""Tools to make allowed preprocessing functions."""
+"""Transform function registry."""
 
-from typing import Callable, Dict
-
-# Registry to map function names to actual implementations
-FUNCTION_REGISTRY: Dict[str, Callable] = {}
+from collections.abc import Callable
 
 
-def register_function(name: str):
-    """Decorator to register a function in the function registry.
-    
-    """
-    def decorator(f: Callable):             
-        FUNCTION_REGISTRY[name] = f
-        return f
-        
+FUNCTION_REGISTRY: dict[str, Callable] = {}
+COLLATOR_REGISTRY: dict[str, str] = {}
+
+
+def register_function(
+    name: str,
+    *,
+    collator: str | None = None,
+):
+    """Register a transform and optional runtime collator."""
+
+    def decorator(fn: Callable):
+        FUNCTION_REGISTRY[name] = fn
+        if collator is not None:
+            COLLATOR_REGISTRY[name] = collator
+        return fn
+
     return decorator

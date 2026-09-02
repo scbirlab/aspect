@@ -22,16 +22,17 @@ from numpy.typing import ArrayLike
 from . import app_name, __version__
 from .io import AutoDataset, DataSource, autoload, save_json, load_json
 from .package_data import CACHE_DIR
-from .transform.base import ColumnTransform
+from .transform import ColumnTransform
 from .typing import DataLike, StrOrIterableOfStr
 
 
 DEFAULT_BATCH_SIZE: int = 1024
+DEFAULT_DATALOADER_BATCH_SIZE: int = 32
 DEFAULT_FORMAT: str = "numpy"
-CONFIG_FILENAME = "config.json"
-DATA_FILENAME = "data.parquet"
-TRANSFORMED_FILENAME = "transformed.parquet"
-EXAMPLE_FILENAME = "example.parquet"
+CONFIG_FILENAME: str = "config.json"
+DATA_FILENAME: str = "data.parquet"
+TRANSFORMED_FILENAME: str = "transformed.parquet"
+EXAMPLE_FILENAME: str = "example.parquet"
 
 
 def _check_column_presence(
@@ -308,6 +309,9 @@ class DataPipeline:
         if filename is not None:
             save_json(config, str(filename))
         return config
+
+    def clone(self):
+        return type(self).from_config(self.to_config)
 
     @cached_property
     def column_transforms_serialized(self):
@@ -775,11 +779,30 @@ class DataPipeline:
     def load_checkpoint(cls, *args, **kwargs):
         return cls.load(*args, **kwargs)
 
+    @property
+    def collators(self) -> dict[str, Callable]:
+        """Runtime collators required by transformed output columns."""
+        from .transform.registry import COLLATOR_REGISTRY
+        from .collate import resolve_collator
+
+        out = {}
+        for column, transforms in self.column_transforms.items():
+            if len(transforms) == 0:
+                continue
+            final_transform = transforms[-1]
+            try:
+                collator_path = COLLATOR_REGISTRY[final_transform.name]
+            except KeyError:
+                continue
+
+            out[column] = resolve_collator(collator_path)
+        return out
+
     def dataloader(
         self,
         dataset=None,
         *,
-        batch_size: int = 32,
+        batch_size: int = DEFAULT_DATALOADER_BATCH_SIZE,
         shuffle: bool = False,
         collators: ColumnCollator | Mapping[str, Callable] | None = None,
         **kwargs
@@ -799,11 +822,13 @@ class DataPipeline:
                 "Provide `dataset` or call the pipeline first with pipeline(data)."
             )
 
-        if isinstance(collators,  Mapping) or collators is None:
-            collators = ColumnCollator(collators)
-        if not isinstance(collators, ColumnCollator):
+        resolved_collators = dict(self.collators)
+
+        if collators is not None and isinstance(collators,  Mapping):
+            resolved_collators.update(dict(collators))
+        else:
             raise ValueError(
-                "If provided, `collators` must be dict or ColumnCollator, "
+                "If provided, `collators` must be dict, "
                 f"but was {type(collators)}: {collators}"
             )
         return DataLoader(

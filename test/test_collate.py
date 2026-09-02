@@ -76,3 +76,23 @@ def test_column_collator_mixed():
         {"id": 1},
         {"id": 2},
     ]
+
+
+def test_pipeline_discovers_registered_collator(monkeypatch):
+    from aspect import DataPipeline
+    from aspect.transform.registry import (COLLATOR_REGISTRY)
+
+    monkeypatch.setitem(
+        COLLATOR_REGISTRY,
+        "identity",
+        "builtins:list",
+    )
+
+    pipeline = DataPipeline({
+        "x": (
+            "value",
+            "identity",
+        ),
+    })
+
+    assert pipeline.collators["x"] is list

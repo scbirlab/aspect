@@ -1,7 +1,2 @@
-from .base import ColumnCollator
+from .base import ColumnCollator, resolve_collator
 from .chemprop import chemprop_collate
-
-__all__ = [
-    "ColumnCollator",
-    "chemprop_collate",
-]
