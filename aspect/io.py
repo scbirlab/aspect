@@ -186,6 +186,16 @@ class DataSource:
 
         return file_checksum(self.uri) == self.checksum
 
+    def assert_verified(self) -> None:
+        """Raise if a verifiable source no longer matches its provenance."""
+
+        if self.verify() is False:
+            raise ValueError(
+                "Data source checksum does not match "
+                "the recorded training-data provenance: "
+                f"{self.uri!r}: ({self.checksum=} != {file_checksum(self.uri)=})."
+            )
+
 
 def hasher(
     s: str | bytes,

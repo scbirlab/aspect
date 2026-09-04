@@ -758,14 +758,36 @@ class DataPipeline:
                 path / data_filename,
                 cache_dir=pipeline.cache_dir,
             )
+
         elif (
             pipeline.data_source is not None
             and pipeline.data_source.is_remote
         ):
-            source = pipeline.data_source
             pipeline.data_in = autoload(
                 pipeline.data_source.uri,
-                cache=pipeline.cache_dir,
+                cache_dir=pipeline.cache_dir,
+            )
+
+        elif (
+            pipeline.data_source is not None
+            and pipeline.data_source.uri is not None
+            and not pipeline.data_source.is_remote
+        ):
+            source = pipeline.data_source
+
+            if not os.path.exists(
+                source.uri
+            ):
+                raise FileNotFoundError(
+                    "Checkpoint references external training data "
+                    f"at {source.uri!r}, but that source no longer exists."
+                )
+
+            source.assert_verified()
+
+            pipeline.data_in = autoload(
+                source.uri,
+                cache_dir=pipeline.cache_dir,
             )
 
         if retained_filename is not None:
