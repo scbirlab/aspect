@@ -16,4 +16,7 @@ def test_pipeline_retains_data_source(tmp_path):
     })
 
     assert isinstance(pipeline.data_source, DataSource)
-    assert pipeline.data_source == DataSource()
+    assert pipeline.data_source.uri is None
+    assert pipeline.data_source.revision is None
+    assert pipeline.data_source.checksum is not None
+    assert len(pipeline.data_source.checksum) == 64

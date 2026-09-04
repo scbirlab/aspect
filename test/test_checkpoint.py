@@ -1,5 +1,8 @@
 import json
 
+import pandas as pd
+import pytest
+
 from aspect.data import DataPipeline
 from aspect.io import DataSource
 
@@ -133,8 +136,107 @@ def test_remote_source_is_reference_only(tmp_path):
         config = json.load(file)
 
     assert config["source"] == {
+        "checksum": None,
         "uri": "hf://datasets/example/data@abc123:train",
         "requested_uri": "hf://datasets/example/data@main:train",
         "revision": "abc123",
         "requested_revision": "main",
     }
+
+
+def test_checkpoint_reconstructs_verified_local_source(tmp_path):
+
+    source = tmp_path / "train.parquet"
+
+    pd.DataFrame({
+        "x": [1., 2., 3.],
+        "y": [2., 4., 6.],
+    }).to_parquet(
+        source,
+        index=False,
+    )
+
+    pipeline = DataPipeline()
+    pipeline(str(source))
+
+    checkpoint = tmp_path / "pipeline"
+
+    pipeline.save(
+        checkpoint,
+        save_source_data=False,
+    )
+
+    restored = DataPipeline.load(checkpoint)
+
+    assert restored.data_in is not None
+    assert restored.data_source.verify() is True
+
+
+def test_checkpoint_rejects_modified_local_source(tmp_path):
+
+    source = tmp_path / "train.parquet"
+
+    pd.DataFrame({
+        "x": [1., 2., 3.],
+    }).to_parquet(
+        source,
+        index=False,
+    )
+
+    pipeline = DataPipeline()
+    pipeline(str(source))
+
+    checkpoint = tmp_path / "pipeline"
+
+    pipeline.save(
+        checkpoint,
+        save_source_data=False,
+    )
+
+    pd.DataFrame({
+        "x": [1., 2., 4.],
+    }).to_parquet(
+        source,
+        index=False,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="checksum",
+    ):
+        DataPipeline.load(checkpoint)
+
+
+def test_embedded_checkpoint_ignores_modified_original_source(
+    tmp_path,
+):
+
+    source = tmp_path / "train.parquet"
+
+    pd.DataFrame({
+        "x": [1., 2., 3.],
+    }).to_parquet(
+        source,
+        index=False,
+    )
+
+    pipeline = DataPipeline()
+    pipeline(str(source))
+
+    checkpoint = tmp_path / "pipeline"
+
+    pipeline.save(
+        checkpoint,
+        save_source_data=True,
+    )
+
+    pd.DataFrame({
+        "x": [9., 9., 9.],
+    }).to_parquet(
+        source,
+        index=False,
+    )
+
+    restored = DataPipeline.load(checkpoint)
+
+    assert restored.data_in["x"] == [1., 2., 3.]

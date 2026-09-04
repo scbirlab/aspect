@@ -106,6 +106,8 @@ def _fill_na(
     """
     for key in x:
         this_type = types[key]
+        if this_type is None:
+            continue
         if this_type.startswith(("int", "uint")):
             fill_value = 0
         elif this_type.startswith("float"):
@@ -312,7 +314,10 @@ class DataPipeline:
         return config
 
     def clone(self):
-        return type(self).from_config(self.to_config())
+        return type(self).from_config(
+            self.to_config(),
+            cache_dir=self.cache_dir,
+        )
 
     @cached_property
     def column_transforms_serialized(self):
@@ -540,14 +545,21 @@ class DataPipeline:
             all_input_columns = list(data_in.column_names)
             all_output_columns = all_input_columns + output_columns
 
+        def _check_type(f):
+            if hasattr(f, "dtype"):
+                return f.dtype
+            elif hasattr(f, "feature"):
+                return _check_type(f.feature)
+            else:
+                return None
+
         data_out = (
             data_in
             .map(
                 _fill_na,
                 fn_kwargs={
                     "types": {
-                        key: f.dtype if hasattr(f, "dtype") 
-                        else f.feature.dtype
+                        key: _check_type(f)
                         for key, f in data_in.info.features.items()
                     },
                 },
@@ -597,7 +609,7 @@ class DataPipeline:
         ==========
         path
             Checkpoint directory.
-        retain_columns
+        save_transformed_columns
             Processed columns that must be retained with the checkpoint.
             This is intended for downstream methods that require access to
             exact training representations.
@@ -610,8 +622,9 @@ class DataPipeline:
             ``True`` always packages the resolved input data.
 
             ``False`` never packages it.
-        retain_example
-            Save one processed example when available.
+        discard_example_data
+            Normally, save one processed example when available. Set 
+            discard_example_data=True to turn off.
         """
         path = Path(path)
         path.mkdir(parents=True, exist_ok=True)
@@ -748,14 +761,36 @@ class DataPipeline:
                 path / data_filename,
                 cache_dir=pipeline.cache_dir,
             )
+
         elif (
             pipeline.data_source is not None
             and pipeline.data_source.is_remote
         ):
-            source = pipeline.data_source
             pipeline.data_in = autoload(
                 pipeline.data_source.uri,
-                cache=pipeline.cache_dir,
+                cache_dir=pipeline.cache_dir,
+            )
+
+        elif (
+            pipeline.data_source is not None
+            and pipeline.data_source.uri is not None
+            and not pipeline.data_source.is_remote
+        ):
+            source = pipeline.data_source
+
+            if not os.path.exists(
+                source.uri
+            ):
+                raise FileNotFoundError(
+                    "Checkpoint references external training data "
+                    f"at {source.uri!r}, but that source no longer exists."
+                )
+
+            source.assert_verified()
+
+            pipeline.data_in = autoload(
+                source.uri,
+                cache_dir=pipeline.cache_dir,
             )
 
         if retained_filename is not None:
@@ -867,7 +902,6 @@ class DataPipeline:
                 "No processed dataset available. "
                 "Provide `dataset` or call the pipeline first with pipeline(data)."
             )
-
         
         return DataLoader(
             dataset,

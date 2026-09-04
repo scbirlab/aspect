@@ -64,6 +64,68 @@ def autoload(
     )
 
 
+def file_checksum(
+    filename: str | os.PathLike,
+    chunk_size: int = 1024 * 1024,
+) -> str:
+    """Return SHA-256 checksum of a file."""
+
+    digest = hashlib.sha256()
+
+    with open(filename, "rb") as handle:
+        while chunk := handle.read(chunk_size):
+            digest.update(chunk)
+
+    return digest.hexdigest()
+
+
+def dataframe_checksum(
+    dataframe,
+) -> str:
+    """Return a stable SHA-256 checksum of dataframe contents and schema."""
+
+    import pyarrow as pa
+    from pandas.util import hash_pandas_object
+
+    digest = hashlib.sha256()
+    digest.update(
+        repr([
+            (
+                str(column),
+                str(dtype),
+            )
+            for column, dtype
+            in dataframe.dtypes.items()
+        ]).encode()
+    )
+    try:
+        values = (
+            hash_pandas_object(
+                dataframe,
+                index=False,
+            )
+            .values
+            .tobytes()
+        )
+    except TypeError:
+        table = pa.Table.from_pandas(
+            dataframe,
+            preserve_index=False,
+        )
+        table = table.replace_schema_metadata(None)
+        sink = pa.BufferOutputStream()
+        with pa.ipc.new_stream(
+            sink,
+            table.schema,
+        ) as writer:
+            writer.write_table(table)
+        values = sink.getvalue().to_pybytes()
+    
+    digest.update(values)
+
+    return digest.hexdigest()
+
+
 @dataclass(frozen=True)
 class DataSource:
     """Provenance for a resolved dataset.
@@ -71,17 +133,23 @@ class DataSource:
     Parameters
     ----------
     uri
-        Original source URI or absolute local filename, when available.
+        Resolved source URI or absolute local filename, when available.
+    requested_uri
+        Source URI requested by the caller before resolution.
     revision
-        Immutable resolved source revision, when available.
+        Immutable resolved remote source revision, when available.
     requested_revision
         Revision requested by the caller before resolution, when available.
+    checksum
+        SHA-256 checksum of non-remote source data, when deterministically
+        available.
     """
 
     uri: str | None = None
     requested_uri: str | None = None
     revision: str | None = None
     requested_revision: str | None = None
+    checksum: str | None = None
 
     @classmethod
     def from_config(
@@ -117,6 +185,32 @@ class DataSource:
             )),
             self.revision is not None,
         ])
+
+    def verify(self) -> bool | None:
+        """Verify local source contents against recorded provenance.
+
+        Returns None when verification is not available.
+
+        """
+
+        if (
+            self.checksum is None
+            or self.uri is None
+            or not os.path.isfile(self.uri)
+        ):
+            return None
+
+        return file_checksum(self.uri) == self.checksum
+
+    def assert_verified(self) -> None:
+        """Raise if a verifiable source no longer matches its provenance."""
+
+        if self.verify() is False:
+            raise ValueError(
+                "Data source checksum does not match "
+                "the recorded training-data provenance: "
+                f"{self.uri!r}: ({self.checksum=} != {file_checksum(self.uri)=})."
+            )
 
 
 def hasher(
@@ -208,9 +302,9 @@ def _load_from_file(
 def _load_from_dataframe(
     dataframe: DataFrame | Mapping[str, ArrayLike],
     cache: str | None = None,
-) -> Dataset:
+) -> tuple[Dataset, DataSource]:
 
-    cache, datasets_cache, _ = configure_hf_cache(cache)
+    cache, _, _ = configure_hf_cache(cache)
     from datasets import Dataset
     from filelock import FileLock
     from pandas import DataFrame
@@ -219,44 +313,38 @@ def _load_from_dataframe(
     if not isinstance(dataframe, DataFrame):
         dataframe = DataFrame(dataframe)
 
-    fingerprint = hashlib.sha256()
-    fingerprint.update(
-        repr([
-            (str(col), str(dtype))
-            for col, dtype in dataframe.dtypes.items()
-        ]).encode()
+    checksum = dataframe_checksum(dataframe)
+    fingerprint = checksum[:16]
+    source = DataSource(
+        checksum=checksum,
     )
-    fingerprint.update(
-        dataframe.to_string(index=False).encode()
-    )
-    fingerprint = fingerprint.hexdigest()[:16]
 
-    csv_dir = os.path.join(cache, "dataframes")
-    csv_filename = f"{fingerprint}.parquet"
-    csv_path = os.path.join(csv_dir, csv_filename)
-    if os.path.exists(csv_path):
+    dataframe_dir = os.path.join(cache, "dataframes")
+    filename = f"{fingerprint}.parquet"
+    _path = os.path.join(dataframe_dir, filename)
+    if os.path.exists(_path):
         return _load_from_file(
-            filename=csv_path, 
-            cache=datasets_cache,
-        )
+            filename=_path, 
+            cache=cache,
+        ), source
 
     lockfile = _lock_path(
-        key=f"dataframe::{fingerprint}",
-        cache_dir=csv_dir,
+        key=f"dataframe::{checksum}",
+        cache_dir=dataframe_dir,
     )
     with FileLock(lockfile, timeout=60. * 60.):
-        if os.path.exists(csv_path):
+        if os.path.exists(_path):
             return _load_from_file(
-                filename=csv_path, 
-                cache=datasets_cache,
+                filename=_path, 
+                cache=cache,
             )
-        dataframe.to_parquet(csv_path, index=False)
+        dataframe.to_parquet(_path, index=False)
         ds = _load_from_file(
-            filename=csv_path, 
-            cache=datasets_cache,
+            filename=_path, 
+            cache=cache,
         )
 
-    return ds
+    return ds, source
 
 
 def _get_ref_chunk(
@@ -372,11 +460,10 @@ class AutoDataset:
             dataset = data
             source = None
         elif isinstance(data, (DataFrame, Mapping)):
-            dataset = _load_from_dataframe(
+            dataset, source = _load_from_dataframe(
                 data, 
                 cache=cache,
             )
-            source = None
         elif isinstance(data, str):
             if data.startswith("hf://"):
                 dataset, source = _resolve_hf_hub_dataset(
@@ -389,7 +476,15 @@ class AutoDataset:
                     filename,
                     cache=cache,
                 )
-                source = DataSource(uri=filename)
+                checksum = (
+                    file_checksum(filename)
+                    if os.path.isfile(filename)
+                    else None
+                )
+                source = DataSource(
+                    uri=filename,
+                    checksum=checksum,
+                )
             else:
                 raise ValueError(
                     f"""
