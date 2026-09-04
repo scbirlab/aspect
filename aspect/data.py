@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING, Any
 from collections.abc import Callable, Iterable, Mapping
+from copy import copy
 from functools import cached_property, partial
 import json
 import os
@@ -505,13 +506,19 @@ class DataPipeline:
         keep_extra_columns: Iterable[str] | None = None
     ):
         data_in = self._resolve_data(dataset)
+
+        if len(self.column_transforms) == 0:
+            # fast path if empty pipeline
+            self.data_in = data_in
+            self.data_out = copy(data_in)
+            self._data_loaded = True
+            self._inspect_data_out()
+            return self.data_out
+
         input_columns = sorted(set(
-            seq[0].input_column for k, seq in self.column_transforms.items()
+            seq[0].input_column for _, seq in self.column_transforms.items()
         ))  # get only the input column for each branch
         output_columns = sorted(set(self.column_transforms))
-
-        if len(input_columns) == 0:
-            raise AttributeError("No input columns specified.")
         
         _check_column_presence(
             input_columns, 
