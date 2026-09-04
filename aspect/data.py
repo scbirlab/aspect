@@ -106,6 +106,8 @@ def _fill_na(
     """
     for key in x:
         this_type = types[key]
+        if this_type is None:
+            continue
         if this_type.startswith(("int", "uint")):
             fill_value = 0
         elif this_type.startswith("float"):
@@ -540,14 +542,21 @@ class DataPipeline:
             all_input_columns = list(data_in.column_names)
             all_output_columns = all_input_columns + output_columns
 
+        def _check_type(f):
+            if hasattr(f, "dtype"):
+                return f.dtype
+            elif hasattr(f, "feature"):
+                return _check_type(f.feature)
+            else:
+                return None
+
         data_out = (
             data_in
             .map(
                 _fill_na,
                 fn_kwargs={
                     "types": {
-                        key: f.dtype if hasattr(f, "dtype") 
-                        else f.feature.dtype
+                        key: _check_type(f)
                         for key, f in data_in.info.features.items()
                     },
                 },
@@ -597,7 +606,7 @@ class DataPipeline:
         ==========
         path
             Checkpoint directory.
-        retain_columns
+        save_transformed_columns
             Processed columns that must be retained with the checkpoint.
             This is intended for downstream methods that require access to
             exact training representations.
@@ -610,8 +619,9 @@ class DataPipeline:
             ``True`` always packages the resolved input data.
 
             ``False`` never packages it.
-        retain_example
-            Save one processed example when available.
+        discard_example_data
+            Normally, save one processed example when available. Set 
+            discard_example_data=True to turn off.
         """
         path = Path(path)
         path.mkdir(parents=True, exist_ok=True)
@@ -867,7 +877,6 @@ class DataPipeline:
                 "No processed dataset available. "
                 "Provide `dataset` or call the pipeline first with pipeline(data)."
             )
-
         
         return DataLoader(
             dataset,
