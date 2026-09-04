@@ -84,6 +84,7 @@ def dataframe_checksum(
 ) -> str:
     """Return a stable SHA-256 checksum of dataframe contents and schema."""
 
+    import pyarrow as pa
     from pandas.util import hash_pandas_object
 
     digest = hashlib.sha256()
@@ -97,15 +98,30 @@ def dataframe_checksum(
             in dataframe.dtypes.items()
         ]).encode()
     )
-
-    digest.update(
-        hash_pandas_object(
-            dataframe,
-            index=False,
+    try:
+        values = (
+            hash_pandas_object(
+                dataframe,
+                index=False,
+            )
+            .values
+            .tobytes()
         )
-        .values
-        .tobytes()
-    )
+    except TypeError:
+        table = pa.Table.from_pandas(
+            dataframe,
+            preserve_index=False,
+        )
+        table = table.replace_schema_metadata(None)
+        sink = pa.BufferOutputStream()
+        with pa.ipc.new_stream(
+            sink,
+            table.schema,
+        ) as writer:
+            writer.write_table(table)
+        values = sink.getvalue().to_pybytes()
+    
+    digest.update(values)
 
     return digest.hexdigest()
 

@@ -314,7 +314,10 @@ class DataPipeline:
         return config
 
     def clone(self):
-        return type(self).from_config(self.to_config())
+        return type(self).from_config(
+            self.to_config(),
+            cache_dir=self.cache_dir,
+        )
 
     @cached_property
     def column_transforms_serialized(self):

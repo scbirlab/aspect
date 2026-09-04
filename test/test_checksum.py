@@ -78,3 +78,24 @@ def test_dataframe_cache_does_not_nest_dataset_cache(tmp_path):
     assert os.environ["HF_HOME"] == str(tmp_path)
     assert os.environ["HF_DATASETS_CACHE"] == str(tmp_path / "datasets")
     assert not (tmp_path / "datasets" / "datasets").exists()
+
+
+def test_dataframe_checksum_nested_values():
+
+    from pandas import DataFrame
+
+    left = DataFrame({
+        "x": [
+            [1., 2.],
+            [3., 4.],
+        ],
+        "y": [1., 2.],
+    })
+
+    right = left.copy(deep=True)
+
+    assert dataframe_checksum(left) == dataframe_checksum(right)
+
+    right.at[1, "x"] = [3., 5.]
+
+    assert dataframe_checksum(left) != dataframe_checksum(right)
