@@ -1,7 +1,7 @@
 from aspect.io import AutoDataset, DataSource
 
 
-def test_mapping_source_is_ephemeral(tmp_path):
+def test_mapping_source_records_checksum(tmp_path):
     resolved = AutoDataset.load(
         {
             "x": [
@@ -14,7 +14,10 @@ def test_mapping_source_is_ephemeral(tmp_path):
     )
 
     assert isinstance(resolved.source, DataSource)
-    assert resolved.source == DataSource()
+    assert resolved.source.uri is None
+    assert resolved.source.revision is None
+    assert resolved.source.checksum is not None
+    assert len(resolved.source.checksum) == 64
     assert len(resolved._dataset) == 2
 
 
