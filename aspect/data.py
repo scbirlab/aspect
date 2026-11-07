@@ -586,11 +586,8 @@ class DataPipeline:
                 f"Instead, it is {type(self.data_in)}: {self.data_in}"
             )
 
-        if save_source_data in (None, False):
-            save_source_data = self.data_in is not None and all([
-                not source.is_remote,
-                source.uri is not None,
-            ])
+        if save_source_data is None and self.data_in is not None:
+            save_source_data = not source.is_remote
 
         if save_source_data and self.data_in is None:
             raise ValueError(
@@ -645,7 +642,7 @@ class DataPipeline:
         if save_transformed:
             self.data_out.save(
                 str(path / checkpoint_config["artefacts"]["transformed_checkpoint"]),
-                save_source_data=save_source_data,
+                save_source_data=True,
                 discard_example_data=discard_example_data,
             )
 
