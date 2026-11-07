@@ -8,7 +8,6 @@ from carabiner import print_err
 import numpy as np
 
 from .. import app_name, __version__
-from ..checkpoint_utils import save_json, _load_json
 from .registry import FUNCTION_REGISTRY
 
 
@@ -55,7 +54,7 @@ class ColumnTransform:
     >>> result = ct(data)
     >>> ct.output_column in result
     True
-    >>> np.allclose(result[ct.output_column], np.log([1., 10., 100.])[:,None])
+    >>> np.allclose(result[ct.output_column], np.log([1., 10., 100.]))
     True
 
     Idempotency — calling twice skips recomputation:
@@ -72,7 +71,7 @@ class ColumnTransform:
     True
     >>> data2 = {"affinity": [1.0, 10.0, 100.0]}
     >>> result3 = ct_restored(data2)
-    >>> np.allclose(result3[ct.output_column], np.log([1., 10., 100.])[:,None])
+    >>> np.allclose(result3[ct.output_column], np.log([1., 10., 100.]))
     True
 
     Chained application propagates columns correctly:
@@ -144,6 +143,7 @@ class ColumnTransform:
 
     def to_file(self, filename: str) -> None:
         """Save to JSON."""
+        from providence.io import save_json
         return save_json(self.to_dict(), filename)
 
     @classmethod
@@ -154,7 +154,8 @@ class ColumnTransform:
     @classmethod
     def from_file(cls, filename: str) -> 'ColumnTransform':
         """Load from JSON."""
-        return cls.from_dict(_load_json(filename))
+        from providence.io import load_json
+        return cls.from_dict(load_json(filename))
 
     @classmethod
     def show(cls) -> 'ColumnTransform':
@@ -166,8 +167,8 @@ class ColumnTransform:
         inputs: Mapping[str, Iterable]
     ) -> np.ndarray:
         result = self.function(inputs, self.input_column)
-        if hasattr(result, "ndim") and result.ndim == 1:
-            result = result[:, None]
+        # if hasattr(result, "ndim") and result.ndim == 1:
+        #     result = result[:, None]
         return result
 
     def __call__(

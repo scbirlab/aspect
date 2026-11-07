@@ -5,6 +5,7 @@ from collections.abc import Iterable, Mapping
 
 from datasets import Dataset, IterableDataset
 from pandas import DataFrame
+from providence.typing import DataLike
 from numpy.typing import ArrayLike
 
 if TYPE_CHECKING:
@@ -12,13 +13,6 @@ if TYPE_CHECKING:
 else:
     ColumnTransform = Any
 
-DataLike: TypeAlias = Union[
-    str, 
-    DataFrame, 
-    Mapping[str, ArrayLike], 
-    Dataset, 
-    IterableDataset
-]
 FeatureLike: TypeAlias = Union[
     str, 
     Mapping[str, ColumnTransform], 

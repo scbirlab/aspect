@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 from aspect.data import DataPipeline
-from aspect.io import DataSource
+from providence import DataSource
 
 
 DATA = {
@@ -45,10 +45,10 @@ def test_ephemeral_source_is_packaged(tmp_path):
     pipeline.save(checkpoint)
 
     assert (checkpoint / "config.json").exists()
-    assert (checkpoint / "data.parquet").exists()
-    assert not (checkpoint / "transformed.parquet").exists()
+    assert (checkpoint / "data.pv" / "data.parquet").exists()
+    assert not (checkpoint / "transformed.pv" / "data.parquet").exists()
 
-    assert (checkpoint / "example.parquet").exists()
+    assert (checkpoint / "data.pv" / "example.parquet").exists()
 
     restored = DataPipeline.load(
         checkpoint,
@@ -56,8 +56,73 @@ def test_ephemeral_source_is_packaged(tmp_path):
     )
 
     assert restored.data_in is not None
-    assert len(restored.data_in) == 3
+    assert len(restored.data_in.data) == 3
+    assert restored.data_out is not None
+
+    restored = DataPipeline.load(
+        checkpoint,
+        cache_dir=tmp_path / "load-cache",
+        skip_call=True,
+    )
+
+    assert restored.data_in is not None
+    assert len(restored.data_in.data) == 3
     assert restored.data_out is None
+
+
+def test_force_no_source_packaging(tmp_path):
+    pipeline = make_pipeline(tmp_path)
+
+    assert pipeline.data_in.data_source.uri is None
+
+    checkpoint = tmp_path / "checkpoint"
+
+    with pytest.raises(
+        ValueError,
+        match="Reference-only checkpoint requires a source URI",
+    ):
+        pipeline.save(
+            checkpoint,
+            save_source_data=False,
+        )
+
+    # Automatic policy should instead materialise ephemeral data.
+    pipeline.save(checkpoint)
+
+    assert (checkpoint / "data.pv" / "data.parquet").exists()
+
+    restored = DataPipeline.load(checkpoint)
+    assert restored.data_in.data["x"] == DATA["x"]
+
+
+def test_remote_source_is_reference_only(tmp_path):
+    pipeline = make_pipeline(tmp_path)
+
+    source = DataSource(
+        uri="hf://datasets/example/data@abc123:train",
+        requested_uri="hf://datasets/example/data@main:train",
+        revision="abc123",
+        requested_revision="main",
+    )
+
+    # Provenance belongs to the input resolver, not the pipeline.
+    pipeline.data_in.data_source = source
+
+    checkpoint = tmp_path / "checkpoint"
+    pipeline.save(checkpoint)
+
+    source_checkpoint = checkpoint / "data.pv"
+
+    assert (source_checkpoint / "config.json").exists()
+    assert not (source_checkpoint / "data.parquet").exists()
+
+    with open(source_checkpoint / "config.json") as f:
+        config = json.load(f)
+
+    assert config["source"] == source.to_config()
+    assert config["artefacts"]["source_data"] is None
+    assert config["artefacts"]["data_checksum"] is None
+    assert config["source"]["revision"] == "abc123"
 
 
 def test_retain_processed_columns(tmp_path):
@@ -67,10 +132,10 @@ def test_retain_processed_columns(tmp_path):
 
     pipeline.save(
         checkpoint,
-        save_transformed_columns=["logx"],
+        save_transformed=True,
     )
 
-    assert (checkpoint / "transformed.parquet").exists()
+    assert (checkpoint / "transformed.pv").exists()
 
     restored = DataPipeline.load(
         checkpoint,
@@ -78,70 +143,8 @@ def test_retain_processed_columns(tmp_path):
     )
 
     assert restored.data_out is not None
-    assert restored.data_out.column_names == ["logx"]
-    assert len(restored.data_out) == 3
-
-
-def test_force_no_source_packaging(tmp_path):
-    pipeline = make_pipeline(tmp_path)
-
-    checkpoint = tmp_path / "checkpoint"
-
-    pipeline.save(
-        checkpoint,
-        save_source_data=False,
-    )
-
-    assert not (checkpoint / "data.parquet").exists()
-
-    restored = DataPipeline.load(
-        checkpoint,
-        cache_dir=tmp_path / "load-cache",
-    )
-
-    assert restored.data_in is None
-
-
-def test_missing_retained_column_raises(tmp_path):
-    import pytest
-
-    pipeline = make_pipeline(tmp_path)
-
-    with pytest.raises(
-        KeyError,
-        match="absent",
-    ):
-        pipeline.save(
-            tmp_path / "checkpoint",
-            save_transformed_columns=["does_not_exist"],
-        )
-
-
-def test_remote_source_is_reference_only(tmp_path):
-    
-    pipeline = make_pipeline(tmp_path)
-    pipeline.data_source = DataSource(
-        uri="hf://datasets/example/data@abc123:train",
-        requested_uri="hf://datasets/example/data@main:train",
-        revision="abc123",
-        requested_revision="main",
-    )
-
-    checkpoint = tmp_path / "checkpoint"
-    pipeline.save(checkpoint)
-
-    assert not (checkpoint / "data.parquet").exists()
-
-    with open(checkpoint / "config.json") as file:
-        config = json.load(file)
-
-    assert config["source"] == {
-        "checksum": None,
-        "uri": "hf://datasets/example/data@abc123:train",
-        "requested_uri": "hf://datasets/example/data@main:train",
-        "revision": "abc123",
-        "requested_revision": "main",
-    }
+    assert restored.data_out.data.column_names == pipeline.data_out.data.column_names
+    assert len(restored.data_out.data) == 3
 
 
 def test_checkpoint_reconstructs_verified_local_source(tmp_path):
@@ -169,7 +172,7 @@ def test_checkpoint_reconstructs_verified_local_source(tmp_path):
     restored = DataPipeline.load(checkpoint)
 
     assert restored.data_in is not None
-    assert restored.data_source.verify() is True
+    assert restored.data_in.data_source.verify() is True
 
 
 def test_checkpoint_rejects_modified_local_source(tmp_path):
@@ -239,4 +242,4 @@ def test_embedded_checkpoint_ignores_modified_original_source(
 
     restored = DataPipeline.load(checkpoint)
 
-    assert restored.data_in["x"] == [1., 2., 3.]
+    assert restored.data_in.data["x"] == [1., 2., 3.]

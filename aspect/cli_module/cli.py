@@ -7,7 +7,7 @@ import sys
 from carabiner.cliutils import CLIOption, CLICommand, CLIApp
 
 from .. import app_name, __version__
-from .featurize import _featurize, _serialize
+from .featurize import _featurize, _serialize, _write
 
 def main() -> None:
 
@@ -43,16 +43,22 @@ def main() -> None:
         help='Load pipeline from this config or checkpoint. Default: do not use, process from scratch.',
     )
     _checkpoint = CLIOption(
-        '--checkpoint',
+        '--checkpoint', '-c',
         type=str,
         default=None,
         help='Save data at this checkpoint. Default: do not save checkpoint.',
     )
 
+    force_write_data = CLIOption(
+        '--force-write-data', '-f',
+        action='store_true',
+        help='Save materialised data tables for remote data.',
+    )
+
     output_name = CLIOption(
         '--output', '-o', 
         type=str,
-        required=True,
+        default=False,
         help='Output filename.',
     )
 
@@ -60,7 +66,7 @@ def main() -> None:
     slice_start = CLIOption(
         '--start', 
         type=int,
-        default=0,
+        default=None,
         help='First row of dataset to process.',
     )
     slice_end = CLIOption(
@@ -100,16 +106,28 @@ def main() -> None:
         options=[
             input_filename, 
             output_name,
+            _checkpoint,
+            force_write_data,
             feature_cols,
             extra_cols,
             slice_start,
             slice_end,
             _config,
-            _checkpoint,
             random_seed,
             cache,
         ],
         main=_featurize,
+    )
+
+    write_cmd = CLICommand(
+        "write",
+        description="Write a featurized table from a checkpoint.",
+        options=[
+            input_filename, 
+            output_name.replace(required=True),
+            cache,
+        ],
+        main=_write,
     )
 
     app = CLIApp(
@@ -119,6 +137,7 @@ def main() -> None:
         commands=[
             serialize,
             featurize,
+            write_cmd,
         ],
     )
     app.run()

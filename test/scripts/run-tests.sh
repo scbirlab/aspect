@@ -17,6 +17,7 @@ aspect serialize \
 
 HF_HOME="$CACHE" aspect featurize \
     "$TRAIN" \
+    --cache "$CACHE" \
     --start 100 \
     --end 200 \
     --features $TEST_FEAT \
@@ -24,6 +25,7 @@ HF_HOME="$CACHE" aspect featurize \
 
 HF_HOME="$CACHE" aspect featurize \
     "$TRAIN" \
+    --cache "$CACHE" \
     --start 100 \
     --end 200 \
     --config "$OUTPUT_DIR"/serialized/out.as \
@@ -34,3 +36,30 @@ if [ "$(diff "$OUTPUT_DIR"/featurized/out-from-config.csv "$OUTPUT_DIR"/featuriz
 then
     exit 1
 fi
+
+HF_HOME="$CACHE" aspect featurize \
+    "$TRAIN" \
+    --cache "$CACHE" \
+    --start 100 \
+    --end 200 \
+    --config "$OUTPUT_DIR"/serialized/out.as \
+    --checkpoint "$OUTPUT_DIR"/featurized/out-w-data.as \
+    --force-write-data \
+    --output "$OUTPUT_DIR"/featurized/out-from-config.csv
+
+HF_HOME="$CACHE" aspect write \
+    "$OUTPUT_DIR"/featurized/out.as \
+    --cache "$CACHE" \
+    --output "$OUTPUT_DIR"/write/out-no-data.csv
+
+HF_HOME="$CACHE" aspect write \
+    "$OUTPUT_DIR"/featurized/out-w-data.as \
+    --cache "$CACHE" \
+    --output "$OUTPUT_DIR"/write/out-with-data.csv
+
+if [ "$(diff "$OUTPUT_DIR"/write/out-no-data.csv "$OUTPUT_DIR"/write/out-with-data.csv | wc -l)" -gt 0 ]
+then 
+    exit 1
+fi
+
+>&2 echo "[INFO] Success!"

@@ -109,7 +109,7 @@ def test_pipeline_collate():
             [3., 4.],
         ],
     })
-    batch = pipeline.collate(data[:])
+    batch = pipeline.collate(data.data[:])
 
     assert batch["x"].shape == (2, 2)
 
@@ -125,7 +125,7 @@ def test_pipeline_collate_chemprop():
             "c1ccccc1",
         ],
     })
-    batch = pipeline.collate(data[:])
+    batch = pipeline.collate(data.data[:])
 
     assert set(batch["molecule"]) == {
         "bmg",

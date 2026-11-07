@@ -15,7 +15,7 @@ def test_pipeline_dataloader():
     })
 
     loader = pipeline.dataloader(
-        data,
+        data.data,
         batch_size=2,
     )
 
@@ -40,7 +40,7 @@ def test_pipeline_dataloader_custom_collator():
         return tuple(values)
 
     loader = pipeline.dataloader(
-        data,
+        data.data,
         batch_size=2,
         collators={"x": collate},
     )
@@ -66,7 +66,7 @@ def test_dataloader_uses_discovered_collators():
     })
 
     loader = pipeline.dataloader(
-        data,
+        data.data,
         batch_size=2,
     )
 
