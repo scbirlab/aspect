@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 from aspect.data import DataPipeline
-from aspect.io import DataSource
+from providence import DataSource
 
 
 DATA = {
@@ -67,7 +67,7 @@ def test_retain_processed_columns(tmp_path):
 
     pipeline.save(
         checkpoint,
-        save_transformed_columns=["logx"],
+        save_transformed=True,
     )
 
     assert (checkpoint / "transformed.parquet").exists()
@@ -78,8 +78,8 @@ def test_retain_processed_columns(tmp_path):
     )
 
     assert restored.data_out is not None
-    assert restored.data_out.column_names == ["logx"]
-    assert len(restored.data_out) == 3
+    assert restored.data_out.column_names == pipeline.data_out.column_names
+    assert len(restored.data_out.data) == 3
 
 
 def test_force_no_source_packaging(tmp_path):
@@ -100,21 +100,6 @@ def test_force_no_source_packaging(tmp_path):
     )
 
     assert restored.data_in is None
-
-
-def test_missing_retained_column_raises(tmp_path):
-    import pytest
-
-    pipeline = make_pipeline(tmp_path)
-
-    with pytest.raises(
-        KeyError,
-        match="absent",
-    ):
-        pipeline.save(
-            tmp_path / "checkpoint",
-            save_transformed_columns=["does_not_exist"],
-        )
 
 
 def test_remote_source_is_reference_only(tmp_path):
@@ -169,7 +154,7 @@ def test_checkpoint_reconstructs_verified_local_source(tmp_path):
     restored = DataPipeline.load(checkpoint)
 
     assert restored.data_in is not None
-    assert restored.data_source.verify() is True
+    assert restored.data_in.data_source.verify() is True
 
 
 def test_checkpoint_rejects_modified_local_source(tmp_path):
@@ -239,4 +224,4 @@ def test_embedded_checkpoint_ignores_modified_original_source(
 
     restored = DataPipeline.load(checkpoint)
 
-    assert restored.data_in["x"] == [1., 2., 3.]
+    assert restored.data_in.data["x"] == [1., 2., 3.]

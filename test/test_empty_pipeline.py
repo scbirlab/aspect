@@ -12,10 +12,10 @@ def test_empty_pipeline_is_identity():
     pipeline = DataPipeline()
     observed = pipeline(data)
 
-    assert observed.column_names == ["x", "label"]
-    assert observed["x"] == data["x"]
-    assert observed["label"] == data["label"]
-    assert pipeline.data_out is not pipeline.data_in
+    assert observed.data.column_names == ["x", "label"]
+    assert observed.data["x"] == data["x"]
+    assert observed.data["label"] == data["label"]
+    assert pipeline.data_out.data is pipeline.data_in.data
 
 
 def test_empty_pipeline_does_not_drop_columns():
@@ -30,4 +30,4 @@ def test_empty_pipeline_does_not_drop_columns():
         drop_unused_columns=True,
     )
 
-    assert set(observed.column_names) == set(data)
+    assert set(observed.data.column_names) == set(data)
