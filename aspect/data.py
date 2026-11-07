@@ -152,24 +152,24 @@ class DataPipeline:
     >>> p = DataPipeline({"log_affinity": ("affinity", "log")})
     >>> data = {"affinity": [1.0, 10.0, 100.0]}
     >>> out = p(data)
-    >>> "log_affinity" in out.column_names
+    >>> "log_affinity" in out.data.column_names
     True
-    >>> np.allclose(out["log_affinity"], np.log([1., 10., 100.])[:,None])
+    >>> np.allclose(out.data["log_affinity"], np.log([1., 10., 100.])[:,None])
     True
 
     drop_unused_columns removes input columns:
 
     >>> out2 = p(data, drop_unused_columns=True)
-    >>> "affinity" not in out2.column_names
+    >>> "affinity" not in out2.data.column_names
     True
-    >>> "log_affinity" in out2.column_names
+    >>> "log_affinity" in out2.data.column_names
     True
 
     keep_extra_columns preserved when dropping:
 
     >>> data2 = {"affinity": [1.0, 10.0], "label": [0, 1]}
     >>> out3 = p(data2, drop_unused_columns=True, keep_extra_columns=["label"])
-    >>> "label" in out3.column_names
+    >>> "label" in out3.data.column_names
     True
 
     Missing input column raises:
