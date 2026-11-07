@@ -46,3 +46,20 @@ HF_HOME="$CACHE" aspect featurize \
     --checkpoint "$OUTPUT_DIR"/featurized/out-w-data.as \
     --force-write-data \
     --output "$OUTPUT_DIR"/featurized/out-from-config.csv
+
+HF_HOME="$CACHE" aspect write \
+    "$OUTPUT_DIR"/featurized/out.as \
+    --cache "$CACHE" \
+    --output "$OUTPUT_DIR"/write/out-no-data.csv
+
+HF_HOME="$CACHE" aspect write \
+    "$OUTPUT_DIR"/featurized/out-w-data.as \
+    --cache "$CACHE" \
+    --output "$OUTPUT_DIR"/write/out-with-data.csv
+
+if [ "$(diff "$OUTPUT_DIR"/write/out-no-data.csv "$OUTPUT_DIR"/write/out-with-data.csv | wc -l)" -gt 0 ]
+then 
+    exit 1
+fi
+
+>&2 echo "[INFO] Success!"

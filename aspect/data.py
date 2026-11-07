@@ -447,7 +447,7 @@ class DataPipeline:
             resolved = dataset
         else:
             resolved = DataResolver(
-                data, 
+                dataset, 
                 cache_dir=cache_dir or self.cache_dir,
             )
 
@@ -546,7 +546,7 @@ class DataPipeline:
         self,
         path: str | os.PathLike,
         *,
-        save_transformed_columns: Iterable[str] | bool | None = None,
+        save_transformed: bool = False,
         save_source_data: bool | None = None,
         discard_example_data: bool = False
     ) -> None:
@@ -556,10 +556,6 @@ class DataPipeline:
         ==========
         path
             Checkpoint directory.
-        save_transformed_columns
-            Processed columns that must be retained with the checkpoint.
-            This is intended for downstream methods that require access to
-            exact training representations.
         package_source
             Whether to embed the input dataset.
 
@@ -602,37 +598,13 @@ class DataPipeline:
                 "`DataPipeline` has not loaded any input data."
             )
 
-        if save_transformed_columns in (None, False):
-            save_transformed_columns = []
-        elif isinstance(save_transformed_columns, (tuple, list)):
-            save_transformed_columns = list(save_transformed_columns)
-        elif not save_transformed_columns is True:
-            raise ValueError(
-                "`save_transformed_columns` must be None, True, False, tuple, list "
-                f"but was {type(save_transformed_columns)}: {save_transformed_columns}"
-            )
-        else:
-            pass
-
-        if all([
-            save_transformed_columns or len(save_transformed_columns) > 0,
-            self.data_out is None,
-        ]):
-            raise ValueError(
-                "Cannot retain processed columns because this "
-                "DataPipeline has not processed any data."
-            )
-
-        if save_transformed_columns is True:
-            save_transformed_columns = list(self.data_out.data.column_names)
-
         if self.data_out is not None:
             missing = [
                 column
-                for column in save_transformed_columns
+                for column in self.data_in.data.column_names
                 if column not in self.data_out.data.column_names
             ]
-        else:
+        else: 
             missing = []
 
         if len(missing) > 0:
@@ -642,12 +614,13 @@ class DataPipeline:
                 + ", ".join(map(str, missing))
             )
 
+        save_transformed = self.data_out is not None and save_transformed
         checkpoint_config = {
             "schema_version": SCHEMA_VERSION,
             "pipeline": self.to_config(),
             "artefacts": {
                 "source_checkpoint": DATA_FILENAME if self.data_in is not None else None,
-                "transformed_checkpoint": TRANSFORMED_FILENAME if len(save_transformed_columns) > 0 else None,
+                "transformed_checkpoint": TRANSFORMED_FILENAME if save_transformed else None,
             },
         }
 
@@ -669,14 +642,8 @@ class DataPipeline:
                     "Data_in exists but is not DataResolver. "
                     f"Instead, it is {type(self.data_in)}: {self.data_in}."
                 )
-        if len(save_transformed_columns) > 0:
-            data_out = copy(self.data_out)
-            data_out.data = copy(self.data_out.data)
-            data_out.data = (
-                data_out.data
-                .select_columns(save_transformed_columns)
-            )
-            data_out.save(
+        if save_transformed:
+            self.data_out.save(
                 str(path / checkpoint_config["artefacts"]["transformed_checkpoint"]),
                 save_source_data=save_source_data,
                 discard_example_data=discard_example_data,
@@ -687,6 +654,7 @@ class DataPipeline:
         cls,
         path: str | os.PathLike,
         *,
+        skip_call: bool = False,
         cache_dir: str | None = None,
     ) -> "DataPipeline":
         """Restore a saved pipeline and its available data artefacts."""
@@ -724,7 +692,12 @@ class DataPipeline:
                 path / retained_checkpoint,
                 cache_dir=cache_dir,
             )
-
+        if all([
+            pipeline.data_out is None,
+            pipeline.data_in is not None,
+            not skip_call,
+        ]):
+            pipeline(pipeline.data_in)
         pipeline._data_loaded = pipeline.data_in is not None
         return pipeline
 
@@ -733,21 +706,10 @@ class DataPipeline:
         path: str | os.PathLike
     ):
         if self.data_out is None:
-            if self.data_in is not None:
-                table = self.data_in
-            else:
-                raise AttributeError("No data to write from this pipeline. Try calling it on some data first.")
-        else:
-            table = self.data_out
-        
+            raise AttributeError("No data to write from this pipeline. Try calling it on some data first.")
+
+        table = self.data_out
         table.write_table(path)
-
-        if self.split_info is not None:
-            if isinstance(self.split_info, SplitInfo):
-                self.split_info.to_config(path / SCHEMA["info"])
-            else:
-                raise ValueError(f"Split info is not SplitInfo: {self.split_info}")
-
         return None            
 
 

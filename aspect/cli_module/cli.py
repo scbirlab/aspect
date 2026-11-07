@@ -7,7 +7,7 @@ import sys
 from carabiner.cliutils import CLIOption, CLICommand, CLIApp
 
 from .. import app_name, __version__
-from .featurize import _featurize, _serialize
+from .featurize import _featurize, _serialize, _write
 
 def main() -> None:
 
@@ -58,7 +58,7 @@ def main() -> None:
     output_name = CLIOption(
         '--output', '-o', 
         type=str,
-        required=True,
+        default=False,
         help='Output filename.',
     )
 
@@ -119,6 +119,17 @@ def main() -> None:
         main=_featurize,
     )
 
+    write_cmd = CLICommand(
+        "write",
+        description="Write a featurized table from a checkpoint.",
+        options=[
+            input_filename, 
+            output_name.replace(required=True),
+            cache,
+        ],
+        main=_write,
+    )
+
     app = CLIApp(
         app_name, 
         description="Serializable featurization pipelines for ML/AI on chemistry, taxonomy, and general tabular data.", 
@@ -126,6 +137,7 @@ def main() -> None:
         commands=[
             serialize,
             featurize,
+            write_cmd,
         ],
     )
     app.run()

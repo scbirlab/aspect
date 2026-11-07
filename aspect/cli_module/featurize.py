@@ -170,7 +170,7 @@ def _featurize(args: Namespace) -> None:
     ds = pipeline(
         ds, 
         keep_extra_columns=extras,
-        drop_unused_columns=True,
+        drop_unused_columns=False,
     )
 
     if args.checkpoint:
@@ -180,19 +180,28 @@ def _featurize(args: Namespace) -> None:
         pipeline.save(
             output,
             save_source_data=args.force_write_data,
-            save_transformed_columns=args.force_write_data,
+            save_transformed=args.force_write_data,
         )
         _validate_checkpoints(pipeline, output)
 
     if args.output:
-        from providence.cli_module.io import _save_dataset
-        output = args.output
-        out_dir = os.path.dirname(output)
-        base = os.path.basename(output)
-        if len(out_dir) > 0:
-            os.makedirs(out_dir, exist_ok=True)
-        _save_dataset(
-            ds.data, 
-            output,
+        pipeline.write_table(
+            args.output
         )
     return None
+
+
+@clicommand("Writing data with the following parameters")
+def _write(args: Namespace) -> None:
+    
+    from ..data import DataPipeline
+
+    pipeline = DataPipeline.load(
+        args.input_file,
+        cache_dir=args.cache,
+    )
+    pipeline.write_table(
+        args.output
+    )
+    return None
+
