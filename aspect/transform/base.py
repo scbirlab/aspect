@@ -155,7 +155,7 @@ class ColumnTransform:
     def from_file(cls, filename: str) -> 'ColumnTransform':
         """Load from JSON."""
         from providence.io import load_json
-        return cls.from_dict(_load_json(filename))
+        return cls.from_dict(load_json(filename))
 
     @classmethod
     def show(cls) -> 'ColumnTransform':
