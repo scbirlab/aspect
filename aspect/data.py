@@ -526,13 +526,13 @@ class DataPipeline:
             data_out
             .with_format(None)  # guard against tensors
             .select_columns(all_output_columns)
-            .map(
-                self._unsqueeze,
-                fn_kwargs={"columns": output_columns},
-                batched=True,
-                batch_size=batch_size,
-                desc="Unsqueezing",
-            )
+            # .map(
+            #     self._unsqueeze,
+            #     fn_kwargs={"columns": output_columns},
+            #     batched=True,
+            #     batch_size=batch_size,
+            #     desc="Unsqueezing",
+            # )
         )
         self.data_in = resolved
         self.data_out = DataResolver(
