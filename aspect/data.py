@@ -154,7 +154,7 @@ class DataPipeline:
     >>> out = p(data)
     >>> "log_affinity" in out.data.column_names
     True
-    >>> np.allclose(out.data["log_affinity"], np.log([1., 10., 100.])[:,None])
+    >>> np.allclose(out.data["log_affinity"], np.log([1., 10., 100.]))
     True
 
     drop_unused_columns removes input columns:

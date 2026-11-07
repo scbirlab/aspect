@@ -70,6 +70,61 @@ def test_ephemeral_source_is_packaged(tmp_path):
     assert restored.data_out is None
 
 
+def test_force_no_source_packaging(tmp_path):
+    pipeline = make_pipeline(tmp_path)
+
+    assert pipeline.data_in.data_source.uri is None
+
+    checkpoint = tmp_path / "checkpoint"
+
+    with pytest.raises(
+        ValueError,
+        match="Reference-only checkpoint requires a source URI",
+    ):
+        pipeline.save(
+            checkpoint,
+            save_source_data=False,
+        )
+
+    # Automatic policy should instead materialise ephemeral data.
+    pipeline.save(checkpoint)
+
+    assert (checkpoint / "data.pv" / "data.parquet").exists()
+
+    restored = DataPipeline.load(checkpoint)
+    assert restored.data_in.data["x"] == DATA["x"]
+
+
+def test_remote_source_is_reference_only(tmp_path):
+    pipeline = make_pipeline(tmp_path)
+
+    source = DataSource(
+        uri="hf://datasets/example/data@abc123:train",
+        requested_uri="hf://datasets/example/data@main:train",
+        revision="abc123",
+        requested_revision="main",
+    )
+
+    # Provenance belongs to the input resolver, not the pipeline.
+    pipeline.data_in.data_source = source
+
+    checkpoint = tmp_path / "checkpoint"
+    pipeline.save(checkpoint)
+
+    source_checkpoint = checkpoint / "data.pv"
+
+    assert (source_checkpoint / "config.json").exists()
+    assert not (source_checkpoint / "data.parquet").exists()
+
+    with open(source_checkpoint / "config.json") as f:
+        config = json.load(f)
+
+    assert config["source"] == source.to_config()
+    assert config["artefacts"]["source_data"] is None
+    assert config["artefacts"]["data_checksum"] is None
+    assert config["source"]["revision"] == "abc123"
+
+
 def test_retain_processed_columns(tmp_path):
     pipeline = make_pipeline(tmp_path)
 

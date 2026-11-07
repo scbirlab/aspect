@@ -179,7 +179,7 @@ def _featurize(args: Namespace) -> None:
         base = os.path.basename(output)
         pipeline.save(
             output,
-            save_source_data=args.force_write_data,
+            save_source_data=True if args.force_write_data else None,
             save_transformed=args.force_write_data,
         )
         _validate_checkpoints(pipeline, output)
