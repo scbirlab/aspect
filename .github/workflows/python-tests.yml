@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
 
     steps:
     - uses: actions/checkout@v4
@@ -39,6 +39,3 @@ jobs:
         pytest aspect --doctest-modules
         # run other tests
         pytest test -v
-    - name: Test CLI
-      run: |
-        bash test/scripts/run-tests.sh

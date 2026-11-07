@@ -8,7 +8,6 @@ from carabiner import print_err
 import numpy as np
 
 from .. import app_name, __version__
-from ..checkpoint_utils import save_json, _load_json
 from .registry import FUNCTION_REGISTRY
 
 
@@ -144,6 +143,7 @@ class ColumnTransform:
 
     def to_file(self, filename: str) -> None:
         """Save to JSON."""
+        from providence.io import save_json
         return save_json(self.to_dict(), filename)
 
     @classmethod
@@ -154,6 +154,7 @@ class ColumnTransform:
     @classmethod
     def from_file(cls, filename: str) -> 'ColumnTransform':
         """Load from JSON."""
+        from providence.io import load_json
         return cls.from_dict(_load_json(filename))
 
     @classmethod

@@ -6,9 +6,6 @@ import os
 from carabiner import print_err
 from carabiner.cliutils import clicommand
 
-from .io import _resolve_and_slice_data, _save_dataset
-
-
 def _parse_feature_spec(x: str, i: int):
     if ":" in x:
         input_col, _, remainder = x.partition(":") 
@@ -132,15 +129,21 @@ def _serialize(args: Namespace) -> None:
         column_transforms=column_transforms,
         columns_to_keep=extras,
     )
-    pipeline.save_checkpoint(output)
+    pipeline.save(output)
     _validate_checkpoints(pipeline, output)
     return None
 
 
 @clicommand("Featurizing data with the following parameters")
 def _featurize(args: Namespace) -> None:
-
+    
+    from providence import DataResolver
     from ..data import DataPipeline
+    
+    if args.checkpoint is None and args.output is None:
+        raise ValueError(
+            f"At least one of --checkpoint or --output should be provided"
+        )
     
     if args.features:
         extras, column_transforms = _common_feature_spec_routine(args.features, args.extras)
@@ -153,36 +156,43 @@ def _featurize(args: Namespace) -> None:
         extras = args.extras or []
         pipeline = DataPipeline(
             cache_dir=args.cache,
-        ).load_checkpoint(args.config)
+        ).load(args.config)
     else:
         raise ValueError(f"One of --features or --config must be provided.")
     
-    ds = _resolve_and_slice_data(
+    ds = DataResolver(
         args.input_file,
+        cache_dir=args.cache,
+    ).select_rows(
         start=args.start,
         end=args.end,
-        cache_dir=args.cache,
     )
     ds = pipeline(
         ds, 
         keep_extra_columns=extras,
         drop_unused_columns=True,
     )
+
     if args.checkpoint:
         output = args.checkpoint
         out_dir = os.path.dirname(output)
         base = os.path.basename(output)
-        pipeline.save_checkpoint(output)
+        pipeline.save(
+            output,
+            save_source_data=args.force_write_data,
+            save_transformed_columns=args.force_write_data,
+        )
         _validate_checkpoints(pipeline, output)
 
     if args.output:
+        from providence.cli_module.io import _save_dataset
         output = args.output
         out_dir = os.path.dirname(output)
         base = os.path.basename(output)
         if len(out_dir) > 0:
             os.makedirs(out_dir, exist_ok=True)
         _save_dataset(
-            ds, 
+            ds.data, 
             output,
         )
     return None
