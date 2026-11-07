@@ -52,7 +52,8 @@ class ColumnCollator:
         rows: Batch,
     ) -> dict[str, ...]:
         from torch.utils.data import default_collate
-
+        import numpy as np
+        
         out = {}
         if not rows:
             return out
@@ -66,6 +67,17 @@ class ColumnCollator:
             if column in self.collators:
                 out[column] = self.collators[column](values)
             else:
-                out[column] = default_collate(values)
+                if (
+                    isinstance(values[0], (list, np.ndarray))
+                    and not isinstance(values[0], (str, bytes))
+                ):
+                    try:
+                        out[column] = default_collate(
+                            [np.asarray(v) for v in values]
+                        )
+                    except (ValueError, TypeError):
+                        out[column] = default_collate(values)
+                else:
+                    out[column] = default_collate(values)
 
         return out

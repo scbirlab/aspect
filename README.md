@@ -1,100 +1,66 @@
 # 🏔️ aspect
 
-![GitHub Workflow Status (with branch)](https://img.shields.io/github/actions/workflow/status/scbirlab/aspect/python-publish.yml)
+![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/scbirlab/aspect/python-publish.yml)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/aspect-data)
 ![PyPI](https://img.shields.io/pypi/v/aspect-data)
 
 <img src="docs/source/_static/logo.svg" width="200">
 
-**aspect** is a lightweight featurisation layer for tabular machine-learning data.
+**aspect** is a Python library and command-line tool for reproducible featurisation of tabular machine-learning datasets.
 
-It lets you define independent feature pipelines for different input columns, then apply them to dictionaries, Pandas data frames, local files, Hugging Face datasets, or saved dataset checkpoints.
+It lets you define independent transformation pipelines for different input columns, including molecular structures, taxonomy, categorical variables, and numerical measurements. Pipelines can be serialised, applied to new datasets, checkpointed, and restored.
 
-The core idea is:
+Aspect uses [Providence](https://github.com/scbirlab/providence) for dataset loading, source provenance, and checkpointing, and [Hugging Face Datasets](https://huggingface.co/docs/datasets/) for Arrow-backed data processing and caching.
+
+The core idea:
 
 ```text
-input table
-  ├── numeric column  → log / identity / custom transforms
-  ├── categorical col → hash / one-hot / custom transforms
-  ├── SMILES column   → chemistry features, if installed
-  ├── species column  → taxonomic features, if installed
-  └── text column     → deep embeddings, if installed
-
-output dataset with named feature columns
+Input dataset
+    │
+    ├── SMILES ──────→ Molecular fingerprints
+    ├── Species ─────→ Taxonomic fingerprints
+    ├── Assay ───────→ Categorical encoding
+    ├── MW ──────────→ Log transformation
+    └── Description ─→ Language-model embeddings
+    │
+    ▼
+Aspect DataPipeline
+    │
+    ├── Reusable feature specification
+    ├── Reproducible dataset checkpoint
+    └── Optional source materialisation
+    │
+    ▼
+Providence DataResolver
+    │
+    ├── Hugging Face Dataset
+    ├── Export: CSV / TSV / JSON / Parquet
+    └── Model-specific collation / DataLoader
 ```
 
-Aspect datasets store Arrow-compatible feature representations.
-
-Before model execution, an optional collator converts stored examples into
-runtime representations. A runtime batch is always a mapping from feature
-column names to batched values. Values may be tensors or structured mappings.
-
-Downstream model libraries should treat runtime batch values as opaque and
-should not perform dataset preprocessing or deserialization.
-
----
+Feature representations are stored in Arrow-compatible columns. Model-specific collators can convert these stored values into tensors, molecular graphs, or other runtime representations without embedding model-specific logic in dataset preprocessing.
 
 ## Contents
 
-* [Quick start](#quick-start)
-* [Installation](#installation)
-* [Command-line interface](#command-line-interface)
-* [Python API](#python-api)
-* [Feature specifications](#feature-specifications)
-* [Available transforms](#available-transforms)
-* [Saving and loading pipelines](#saving-and-loading-pipelines)
-* [Supported input and output formats](#supported-input-and-output-formats)
-* [Custom transforms](#custom-transforms)
-* [Optional chemistry, taxonomy, and deep-learning features](#optional-chemistry-taxonomy-and-deep-learning-features)
-* [Development](#development)
-* [Issues, problems, suggestions](#issues-problems-suggestions)
+- [Quick start](#quick-start)
+- [Installation](#installation)
+- [Command-line interface](#command-line-interface)
+- [Python API](#python-api)
+- [Feature specifications](#feature-specifications)
+- [Available transforms](#available-transforms)
+- [Saving and loading pipelines](#saving-and-loading-pipelines)
+- [Supported input and output formats](#supported-input-and-output-formats)
+- [Working with output columns](#working-with-output-columns)
+- [Custom transforms](#custom-transforms)
+- [Model integration](#model-integration)
+- [Development](#development)
+- [Issues and documentation](#issues-and-documentation)
 
 ---
 
 ## Quick start
 
-### Python API
-
-```python
-from aspect.data import DataPipeline
-
-data = {
-    "compound_id": ["cmpd-1", "cmpd-2", "cmpd-3"],
-    "assay": ["MIC", "MIC", "IC50"],
-    "mwt": [46.07, 60.10, 78.11],
-    "pIC50": [5.0, 6.2, 4.8],
-}
-
-pipe = DataPipeline(
-    column_transforms={
-        "log_mwt": ("mwt", "log"),
-        "assay_hash": (
-            "assay",
-            {"name": "hash", "kwargs": {"ndim": 8}},
-        ),
-        "target": ("pIC50", "identity"),
-    },
-    columns_to_keep=["compound_id"],
-)
-
-features = pipe(data, drop_unused_columns=True)
-
-print(features.column_names)
-print(pipe.data_out_shape)
-print(features[:2])
-```
-
-Expected column structure:
-
-```text
-['compound_id', 'log_mwt', 'assay_hash', 'target']
-```
-
-`log_mwt` and `target` are `(n, 1)` arrays. `assay_hash` is an `(n, 8)` array. The output is a Hugging Face `Dataset`, so it can be saved, sliced, converted to Pandas, or passed into a downstream PyTorch/data-loader layer.
-
----
-
-### Command-line quick start
+### 1. Featurise a dataset
 
 Create a small CSV:
 
@@ -107,7 +73,7 @@ cmpd-3,IC50,78.11,4.8
 CSV
 ```
 
-Featurise it:
+Generate numeric and categorical features:
 
 ```bash
 aspect featurize compounds.csv \
@@ -116,37 +82,99 @@ aspect featurize compounds.csv \
     --output features.parquet
 ```
 
-The feature specification means:
+The feature specification defines the transformations:
 
-```text
-mwt:log@log_mwt       # read mwt, apply log, write column name `log_mwt`
-assay:hash@assay_hash # read assay, apply deterministic hash vector, write column name `assay_hash`
-pIC50@target          # read pIC50, identity transform, write column name `target`
---extras compound_id  # retain compound_id without transforming it
-```
+| Specification | Meaning |
+|---|---|
+| `mwt:log@log_mwt` | Apply natural logarithm to `mwt` |
+| `assay:hash@assay_hash` | Hash the assay category into a fixed-length vector |
+| `pIC50@target` | Copy `pIC50` into a feature named `target` |
+| `--extras compound_id` | Explicitly retain the compound identifier |
 
----
+By default, Aspect also retains original input columns.
 
-### Reuse a saved feature specification
+### 2. Save a reproducible checkpoint
 
-```bash
-aspect serialize \
-    --features mwt:log@log_mwt assay:hash@assay_hash pIC50@target \
-    --extras compound_id \
-    --output feature-spec.as
-```
-
-Then apply the same specification later:
+The same command can save a checkpoint alongside the exported table:
 
 ```bash
 aspect featurize compounds.csv \
-    --config feature-spec.as \
-    --output features-from-config.parquet
+    --features mwt:log@log_mwt assay:hash@assay_hash \
+    --checkpoint features.as \
+    --output features.parquet
+```
+
+The checkpoint records the feature specification, data source, and information needed to reconstruct the transformed dataset.
+
+### 3. Restore and export
+
+Reconstruct the transformed dataset from its checkpoint:
+
+```bash
+aspect write features.as \
+    --output restored.parquet
+```
+
+Export it in another format:
+
+```bash
+aspect write features.as \
+    --output restored.csv.gz
+```
+
+### 4. Python API
+
+```python
+from aspect.data import DataPipeline
+
+data = {
+    "compound_id": ["cmpd-1", "cmpd-2", "cmpd-3"],
+    "assay": ["MIC", "MIC", "IC50"],
+    "mwt": [46.07, 60.10, 78.11],
+}
+
+pipe = DataPipeline(
+    column_transforms={
+        "log_mwt": ("mwt", "log"),
+        "assay_hash": (
+            "assay",
+            {"name": "hash", "kwargs": {"ndim": 8}},
+        ),
+    },
+    columns_to_keep=["compound_id"],
+)
+
+resolved = pipe(data, drop_unused_columns=True)
+
+# Access the underlying Hugging Face Dataset
+features = resolved.data
+
+print(features.column_names)
+print(features[:2])
+```
+
+The transformed dataset contains:
+
+```text
+['compound_id', 'log_mwt', 'assay_hash']
+```
+
+`log_mwt` contains a numeric feature with shape `(n, 1)`, while `assay_hash` contains an `(n, 8)` feature matrix.
+
+Save and reload the pipeline:
+
+```python
+pipe.save("features.as")
+
+restored = DataPipeline.load("features.as")
+print(restored.data_out.data[:2])
 ```
 
 ---
 
 ## Installation
+
+Aspect requires Python 3.11 or later.
 
 ### Basic installation
 
@@ -154,39 +182,19 @@ aspect featurize compounds.csv \
 pip install aspect-data
 ```
 
-### Chemistry features
+### Optional dependencies
 
-Install chemistry support if you want SMILES featurisation via `schemist`:
+Install only the features you need:
 
-```bash
-pip install "aspect-data[chem]"
-```
+| Extra | Functionality | Installation |
+|---|---|---|
+| `chem` | Molecular fingerprints and descriptors via Schemist | `pip install "aspect-data[chem]"` |
+| `bio` | Taxonomic fingerprints via Vectome | `pip install "aspect-data[bio]"` |
+| `torch` | PyTorch integration | `pip install "aspect-data[torch]"` |
+| `chemprop` | Chemprop molecular features | `pip install "aspect-data[chemprop]"` |
+| `deep` | Transformer-based embeddings | `pip install "aspect-data[deep]"` |
 
-### Chemprop support
-
-Install Chemprop support if you want to prepare Chemprop-style molecular data:
-
-```bash
-pip install "aspect-data[chemprop]"
-```
-
-### Taxonomic features
-
-Install taxonomy support if you want species or taxon-ID features via `vectome`:
-
-```bash
-pip install "aspect-data[bio]"
-```
-
-### Deep-learning features
-
-Install transformer support if you want Hugging Face model embeddings:
-
-```bash
-pip install "aspect-data[deep]"
-```
-
-### Development installation
+### Install from source
 
 ```bash
 git clone https://github.com/scbirlab/aspect.git
@@ -194,48 +202,59 @@ cd aspect
 pip install -e ".[dev]"
 ```
 
+Aspect depends on [Providence](https://github.com/scbirlab/providence) (`>=0.0.2`), which provides the common dataset-resolution and checkpointing infrastructure.
+
 ---
 
 ## Command-line interface
 
-The CLI has two main commands:
+Aspect provides three commands:
 
 ```bash
 aspect serialize
 aspect featurize
+aspect write
 ```
 
-Use help for the full option list:
+View available arguments with:
 
 ```bash
 aspect --help
-aspect serialize --help
 aspect featurize --help
+aspect serialize --help
+aspect write --help
 ```
 
 ### `aspect serialize`
 
-Create a reusable pipeline checkpoint from a feature specification.
+Create a reusable feature specification without processing a dataset:
 
 ```bash
 aspect serialize \
     --features mwt:log@log_mwt assay:hash@assay_hash \
-    --extras compound_id pIC50 \
+    --extras compound_id \
     --output feature-spec.as
+```
+
+The specification can then be applied to other datasets:
+
+```bash
+aspect featurize new-compounds.csv \
+    --config feature-spec.as \
+    --output new-features.parquet
 ```
 
 ### `aspect featurize`
 
-Apply a feature specification or saved config to a dataset.
+Apply a feature specification or saved pipeline to a dataset.
 
 ```bash
 aspect featurize compounds.csv \
     --features mwt:log@log_mwt assay:hash@assay_hash \
-    --extras compound_id pIC50 \
     --output features.parquet
 ```
 
-or:
+A saved specification can be supplied with `--config`:
 
 ```bash
 aspect featurize compounds.csv \
@@ -243,28 +262,62 @@ aspect featurize compounds.csv \
     --output features.parquet
 ```
 
-### Slice a dataset
-
-This is useful for testing on large datasets.
+#### Checkpoint without exporting
 
 ```bash
-aspect featurize large-table.csv \
-    --start 1000 \
-    --end 2000 \
-    --features assay:hash@assay_hash mwt:log@log_mwt \
-    --output slice.parquet
+aspect featurize compounds.csv \
+    --config feature-spec.as \
+    --checkpoint features.as
 ```
 
-### Cache location
+#### Save source and transformed data
 
-Use `--cache` to control where intermediate Hugging Face dataset files are cached.
+```bash
+aspect featurize compounds.csv \
+    --config feature-spec.as \
+    --checkpoint features.as \
+    --force-write-data
+```
+
+This requests materialisation of both source and transformed data inside the checkpoint, making it less dependent on the original dataset remaining available.
+
+Without this option, Providence can retain immutable remote datasets by reference, avoiding unnecessary duplication. Local inputs are generally packaged by the current implementation.
+
+#### Process a subset of rows
+
+```bash
+aspect featurize large-table.parquet \
+    --start 1000 \
+    --end 2000 \
+    --features mwt:log@log_mwt \
+    --checkpoint subset.as
+```
+
+`--start` is inclusive and `--end` is exclusive. The example selects rows 1000–1999.
+
+#### Configure the cache
 
 ```bash
 aspect featurize compounds.csv \
     --features assay:hash@assay_hash \
-    --cache .aspect-cache \
+    --cache .cache \
     --output features.parquet
 ```
+
+### `aspect write`
+
+Export data from a saved Aspect checkpoint:
+
+```bash
+aspect write features.as --output features.csv
+aspect write features.as --output features.csv.gz
+aspect write features.as --output features.parquet
+aspect write features.as --output features.hf
+```
+
+The checkpoint is loaded through `DataPipeline.load()` and the output is delegated to Providence.
+
+If the checkpoint contains only a feature specification and no source dataset, there is no transformed table to export.
 
 ---
 
@@ -276,78 +329,115 @@ The main class is `DataPipeline`.
 from aspect.data import DataPipeline
 ```
 
-A `DataPipeline` maps one or more input columns to named output feature columns.
+A pipeline maps input columns to named output features.
 
 ```python
-pipe = DataPipeline(
-    column_transforms={
-        "log_mwt": ("mwt", "log"),
-        "assay_hash": ("assay", "hash"),
-    },
+pipe = DataPipeline({
+    "log_mwt": ("mwt", "log"),
+    "assay_hash": (
+        "assay",
+        {"name": "hash", "kwargs": {"ndim": 16}},
+    ),
+})
+```
+
+### Input data
+
+Pipelines can be applied to Python mappings, Pandas DataFrames, Hugging Face datasets, local files, or Providence resolvers.
+
+```python
+# Dictionary
+resolved = pipe({
+    "mwt": [46.07, 60.10],
+    "assay": ["MIC", "IC50"],
+})
+
+# Pandas DataFrame
+resolved = pipe(df)
+
+# Local file
+resolved = pipe("compounds.csv")
+
+# Hugging Face Hub dataset
+resolved = pipe(
+    "hf://datasets/scbirlab/fang-2023-biogen-adme~scaffold-split:train"
 )
 ```
 
-Apply it to a dictionary:
+### Providence integration
+
+Aspect uses Providence's `DataResolver` to manage source datasets and transformed results.
 
 ```python
-out = pipe({
-    "mwt": [46.07, 60.10, 78.11],
-    "assay": ["MIC", "MIC", "IC50"],
-})
-```
-
-Apply it to a Pandas data frame:
-
-```python
-import pandas as pd
+from providence import DataResolver
 from aspect.data import DataPipeline
 
-df = pd.DataFrame({
-    "mwt": [46.07, 60.10, 78.11],
-    "assay": ["MIC", "MIC", "IC50"],
-})
+source = DataResolver("compounds.csv")
 
 pipe = DataPipeline({
     "log_mwt": ("mwt", "log"),
-    "assay_hash": ("assay", {"name": "hash", "kwargs": {"ndim": 16}}),
 })
 
-out = pipe(df)
+result = pipe(source)
+
+# Underlying datasets
+input_ds = pipe.data_in.data
+output_ds = result.data
+
+# Source metadata
+source_info = pipe.data_in.data_source
+
+print(output_ds.column_names)
 ```
 
-Apply it to a local file:
+`DataPipeline.__call__()` returns a `DataResolver`, rather than a raw Hugging Face dataset.
+
+The underlying dataset remains available through `.data`, and provenance is tracked through the resolver.
+
+### Exporting results
+
+```python
+pipe.write_table("features.parquet")
+pipe.write_table("features.csv.gz")
+```
+
+This delegates serialization to Providence.
+
+### Selecting rows
+
+For explicit row selection, create and slice the resolver before passing it to Aspect:
+
+```python
+source = DataResolver("compounds.csv")
+source = source.select_rows(start=100, end=200)
+
+result = pipe(source)
+```
+
+### Reusing transformations
+
+The same feature specification can be applied to multiple datasets:
 
 ```python
 pipe = DataPipeline({
     "log_mwt": ("mwt", "log"),
 })
 
-out = pipe("compounds.csv")
+train = pipe("train.csv")
+test = pipe("test.csv")
 ```
 
-Apply it to a Hugging Face dataset reference:
-
-```python
-pipe = DataPipeline({
-    "assay_hash": ("assay", "hash"),
-})
-
-out = pipe("hf://datasets/scbirlab/fang-2023-biogen-adme~scaffold-split:train")
-```
+Each call returns the corresponding transformed resolver. The pipeline's `data_in` and `data_out` attributes refer to the most recent call.
 
 ---
 
 ## Feature specifications
 
-A feature specification defines:
+Aspect supports both structured Python specifications and compact CLI strings.
 
-1. the input column;
-2. the transform or chain of transforms;
-3. the output column name.
+### Python specifications
 
-### Python feature specs
-
-The recommended Python form is:
+The basic format is:
 
 ```python
 {
@@ -363,60 +453,77 @@ pipe = DataPipeline({
 })
 ```
 
-For transform arguments, use a dictionary with a nested `kwargs` field:
+### Parameterised transforms
+
+Pass a dictionary containing the transform name and keyword arguments:
 
 ```python
 pipe = DataPipeline({
     "assay_hash": (
         "assay",
-        {"name": "hash", "kwargs": {"ndim": 32, "seed": 123}},
+        {
+            "name": "hash",
+            "kwargs": {
+                "ndim": 32,
+                "seed": 123,
+            },
+        },
     ),
 })
 ```
 
-For chained transforms, pass a list:
+### Chained transforms
+
+Pass a sequence of transformations:
 
 ```python
 pipe = DataPipeline({
-    "log_hashed_assay": (
-        "assay",
+    "scaled_log_mwt": (
+        "mwt",
         [
-            {"name": "hash", "kwargs": {"ndim": 16}},
             "log",
+            {
+                "name": "scale",
+                "kwargs": {"factor": 0.1},
+            },
         ],
     ),
 })
 ```
 
-Only use transform chains when the output of one transform is mathematically valid input for the next. For example, `hash → log` is usually not sensible because hash values may be negative.
+The `scale` transform in this example is a custom transform that must be registered first.
 
-### CLI feature specs
+Chains execute in the supplied order. Each transform must accept the representation produced by the preceding transform.
 
-CLI specs use a compact string form:
+### CLI specifications
+
+The CLI format is:
 
 ```text
 input_column:transform@output_column
 ```
 
-Examples:
+| Syntax | Behaviour |
+|---|---|
+| `column` | Retain an input column |
+| `column@new_name` | Identity transformation with a new name |
+| `column:transform` | Apply a transform and automatically name the output |
+| `column:transform@new_name` | Apply a transform with an explicit output name |
+| `column:t1:t2@new_name` | Chain transformations |
+| `column:transform(arg=value)@name` | Pass simple transform arguments |
 
-```text
-mwt:log@log_mwt
-assay:hash@assay_hash
-pIC50@target
+Example:
+
+```bash
+aspect featurize compounds.csv \
+    --features \
+        mwt:log@log_mwt \
+        assay:hash(ndim=32)@assay_hash \
+        pIC50@target \
+    --output features.parquet
 ```
 
-Supported forms:
-
-| Spec                        | Meaning                                        |
-| --------------------------- | ---------------------------------------------- |
-| `column`                    | keep `column` as an extra column               |
-| `column@new_name`           | identity transform from `column` to `new_name` |
-| `column:transform`          | transform `column`; auto-name the output       |
-| `column:transform@new_name` | transform `column`; write `new_name`           |
-| `column:t1:t2@new_name`     | apply chained transforms                       |
-
-For parameterised transforms, prefer the Python API. The Python API supports structured keyword arguments cleanly through `{"name": ..., "kwargs": ...}`.
+Simple integers, floats, and booleans are parsed automatically. For complex or nested parameters, use the Python API.
 
 ---
 
@@ -424,20 +531,18 @@ For parameterised transforms, prefer the Python API. The Python API supports str
 
 ### Base transforms
 
-These are available with the standard installation.
+Available with the standard installation:
 
-| Transform  |       Input |              Output | Notes                                                      |
-| ---------- | ----------: | ------------------: | ---------------------------------------------------------- |
-| `identity` |  any column |               array | Pass-through transform                                     |
-| `log`      |     numeric |               array | Natural logarithm, `np.log`                                |
-| `hash`     | string-like | fixed-length vector | Deterministic string hashing                               |
-| `one-hot`  | categorical |              vector | Python API recommended because categories must be supplied |
+| Transform | Input | Output |
+|---|---|---|
+| `identity` | Any supported column | Identity representation |
+| `log` | Numeric | Natural logarithm |
+| `hash` | Categorical/string | Deterministic fixed-length vector |
+| `one-hot` | Categorical | One-hot vector |
 
 Example:
 
 ```python
-from aspect.data import DataPipeline
-
 pipe = DataPipeline({
     "log_mwt": ("mwt", "log"),
     "assay_hash": (
@@ -446,30 +551,31 @@ pipe = DataPipeline({
     ),
     "assay_onehot": (
         "assay",
-        {"name": "one-hot", "kwargs": {"categories": ["MIC", "IC50"]}},
+        {
+            "name": "one-hot",
+            "kwargs": {"categories": ["MIC", "IC50"]},
+        },
     ),
 })
 ```
 
 ### Chemistry transforms
 
-Require:
+Install with:
 
 ```bash
 pip install "aspect-data[chem]"
 ```
 
-| Transform            |  Input |                   Output |
-| -------------------- | -----: | -----------------------: |
-| `morgan-fingerprint` | SMILES |    molecular fingerprint |
-| `descriptors-2d`     | SMILES | 2D molecular descriptors |
-| `descriptors-3d`     | SMILES | 3D molecular descriptors |
+| Transform | Input | Output |
+|---|---|---|
+| `morgan-fingerprint` | SMILES | Molecular fingerprint |
+| `descriptors-2d` | SMILES | 2D molecular descriptors |
+| `descriptors-3d` | SMILES | 3D molecular descriptors |
 
 Example:
 
 ```python
-from aspect.data import DataPipeline
-
 data = {
     "compound_id": ["ethanol", "ethylamine", "benzene"],
     "smiles": ["CCO", "CCN", "c1ccccc1"],
@@ -483,26 +589,20 @@ pipe = DataPipeline(
     columns_to_keep=["compound_id"],
 )
 
-features = pipe(data, drop_unused_columns=True)
+features = pipe(data, drop_unused_columns=True).data
 ```
 
 ### Taxonomic transforms
 
-Require:
+Install with:
 
 ```bash
 pip install "aspect-data[bio]"
 ```
 
-| Transform             |                    Input |                Output |
-| --------------------- | -----------------------: | --------------------: |
-| `vectome-fingerprint` | species name or taxon ID | taxonomic fingerprint |
-
-Example:
+The `vectome-fingerprint` transform encodes species names or taxonomic identifiers as fixed-length taxonomic representations.
 
 ```python
-from aspect.data import DataPipeline
-
 data = {
     "species": [
         "Mycobacterium tuberculosis",
@@ -514,30 +614,27 @@ data = {
 pipe = DataPipeline({
     "species_fp": (
         "species",
-        {"name": "vectome-fingerprint", "kwargs": {"ndim": 128}},
+        {
+            "name": "vectome-fingerprint",
+            "kwargs": {"ndim": 128},
+        },
     ),
 })
 
-features = pipe(data)
+features = pipe(data).data
 ```
 
-### Deep embedding transforms
+### Deep-learning transforms
 
-Require:
+Install with:
 
 ```bash
 pip install "aspect-data[deep]"
 ```
 
-| Transform | Input |                                    Output |
-| --------- | ----: | ----------------------------------------: |
-| `hf-bart` |  text | aggregated BART encoder/decoder embedding |
-
-Example:
+The `hf-bart` transform supports transformer-derived text embeddings.
 
 ```python
-from aspect.data import DataPipeline
-
 data = {
     "description": [
         "cell wall inhibitor",
@@ -559,32 +656,34 @@ pipe = DataPipeline({
     ),
 })
 
-features = pipe(data)
+features = pipe(data).data
 ```
 
-The model will be loaded through Hugging Face `transformers`, so the first run may download model weights.
+Model weights may be downloaded on first use.
 
-### Chemprop transform
+### Chemprop transforms
 
-Require:
+Install with:
 
 ```bash
 pip install "aspect-data[chemprop]"
 ```
 
-`chemprop-mol` is intended for converting SMILES into Chemprop-style molecular datapoints, with optional labels and extra dense features.
+The `chemprop-mol` transform prepares molecular datapoints for Chemprop-style graph models.
 
-Because Chemprop models often need special collation and graph batching, use this transform together with a downstream model adapter or data-loader layer rather than assuming the output should be horizontally stacked with ordinary numeric arrays.
+Molecular graphs generally require model-specific batching. Aspect separates dataset storage from runtime collation so graph representations can be reconstructed when needed.
 
 ---
 
 ## Saving and loading pipelines
 
-`DataPipeline` objects can be checkpointed.
+Aspect supports reusable feature specifications and provenance-aware dataset checkpoints.
+
+### Save a feature specification
+
+Create a pipeline without applying it to any dataset:
 
 ```python
-from aspect.data import DataPipeline
-
 pipe = DataPipeline({
     "log_mwt": ("mwt", "log"),
     "assay_hash": (
@@ -593,89 +692,180 @@ pipe = DataPipeline({
     ),
 })
 
-pipe.save_checkpoint("feature-spec.as")
+pipe.save("feature-spec.as")
 ```
 
-Load the checkpoint later:
+Restore and apply it later:
 
 ```python
 from aspect.data import DataPipeline
 
-pipe = DataPipeline().load_checkpoint("feature-spec.as")
+pipe = DataPipeline.load("feature-spec.as")
 
-out = pipe({
-    "mwt": [46.07, 60.10, 78.11],
-    "assay": ["MIC", "MIC", "IC50"],
+result = pipe({
+    "mwt": [46.07, 60.10],
+    "assay": ["MIC", "IC50"],
 })
 ```
 
-If the pipeline has already been applied to data, the checkpoint can also store input/output datasets unless skipped:
+### Checkpoint a transformed dataset
 
 ```python
-pipe.save_checkpoint(
-    "feature-spec-and-data.as",
-    skip_data_in=False,
-    skip_data_out=False,
+pipe = DataPipeline({
+    "log_mwt": ("mwt", "log"),
+})
+
+result = pipe("compounds.csv")
+pipe.save("features.as")
+```
+
+The checkpoint records the pipeline configuration and a Providence checkpoint describing the input dataset.
+
+Load it again:
+
+```python
+restored = DataPipeline.load("features.as")
+
+features = restored.data_out.data
+```
+
+By default, when transformed data has not been explicitly saved, loading reconstructs it by applying the feature pipeline to the restored source dataset.
+
+### Materialise transformed data
+
+```python
+pipe.save(
+    "features.as",
+    save_transformed=True,
 )
 ```
 
-For reusable feature specifications, it is usually cleaner to save the pipeline before applying it to a dataset, or to skip data when checkpointing.
+This stores a transformed-data checkpoint alongside the source checkpoint.
+
+### Package source data
+
+```python
+pipe.save(
+    "features.as",
+    save_source_data=True,
+    save_transformed=True,
+)
+```
+
+This requests packaging of the input data and transformed data.
+
+For remote datasets with immutable revisions, Providence can instead retain source references, allowing checkpoints to be substantially smaller.
+
+Local sources are normally materialised to preserve reproducibility.
+
+### Load without applying transformations
+
+```python
+pipe = DataPipeline.load(
+    "features.as",
+    skip_call=True,
+)
+```
+
+This restores the specification and available checkpoint artefacts without automatically running the transformation pipeline.
+
+### Checkpoint layout
+
+A checkpoint may contain:
+
+```text
+features.as/
+├── config.json
+├── data.pv/
+└── transformed.pv/
+```
+
+`config.json` contains the pipeline specification and checkpoint metadata.
+
+`data.pv` contains the Providence source checkpoint.
+
+`transformed.pv` is included when transformed data is explicitly checkpointed.
+
+The contents of Providence checkpoints depend on whether datasets are retained by reference or materialised.
+
+### Compatibility
+
+The legacy methods `save_checkpoint()` and `load_checkpoint()` remain available as compatibility aliases, but new code should use `save()` and `load()`.
 
 ---
 
 ## Supported input and output formats
 
-### Python inputs
+### Input types
 
-`DataPipeline` accepts:
+Aspect accepts the input types supported by Providence, including:
 
-| Input type                     | Example                                                |
-| ------------------------------ | ------------------------------------------------------ |
-| dictionary / mapping           | `{"smiles": ["CCO", "CCN"]}`                           |
-| Pandas `DataFrame`             | `pipe(df)`                                             |
-| Hugging Face `Dataset`         | `pipe(dataset)`                                        |
-| Hugging Face `IterableDataset` | `pipe(iterable_dataset)`                               |
-| local file path                | `pipe("data.csv")`                                     |
-| Hugging Face dataset ref       | `pipe("hf://datasets/org/name~config:split@revision")` |
+| Input | Example |
+|---|---|
+| Python mapping | `{"smiles": ["CCO", "CCN"]}` |
+| Pandas DataFrame | `pipe(df)` |
+| Hugging Face Dataset | `pipe(dataset)` |
+| Hugging Face IterableDataset | `pipe(iterable_dataset)` |
+| Local file | `pipe("data.csv")` |
+| Hugging Face dataset reference | `pipe("hf://datasets/org/repo~config:split")` |
+| Providence DataResolver | `pipe(resolved)` |
 
-### Local file inputs
+### Local files
 
-Supported local input extensions include:
+Commonly supported formats include:
 
-* `.csv`, `.csv.gz`
-* `.tsv`, `.tsv.gz`
-* `.txt`, `.txt.gz`
-* `.json`
-* `.parquet`
-* `.arrow`
-* `.xml`
-* `.hf` saved Hugging Face datasets
+- CSV: `.csv`, `.csv.gz`
+- Tab-separated: `.tsv`, `.tsv.gz`, `.txt`, `.txt.gz`
+- JSON: `.json`
+- Parquet: `.parquet`
+- Arrow: `.arrow`
+- XML: `.xml`
+- Saved Hugging Face datasets: `.hf`
 
-### CLI outputs
+### Output formats
 
-`aspect featurize --output` can write:
+The CLI and `write_table()` use Providence to select an output format from the filename.
 
-| Extension                          | Output                                    |
-| ---------------------------------- | ----------------------------------------- |
-| `.csv`, `.csv.gz`                  | CSV                                       |
-| `.tsv`, `.txt`, optionally gzipped | delimited text                            |
-| `.json`                            | JSON                                      |
-| `.parquet`                         | Parquet                                   |
-| `.sql`                             | SQL                                       |
-| `.hf`                              | Hugging Face dataset saved to disk        |
-| unknown extension                  | Hugging Face dataset, with `.hf` appended |
+| Extension | Format |
+|---|---|
+| `.csv` | CSV |
+| `.csv.gz` | Gzip-compressed CSV |
+| `.tsv`, `.txt` | Tab-separated text |
+| `.tsv.gz`, `.txt.gz` | Gzip-compressed tab-separated text |
+| `.json` | JSON |
+| `.parquet` | Parquet |
+| `.hf` | Hugging Face dataset directory |
+| Unrecognised | Hugging Face dataset directory with `.hf` appended |
+
+### Hugging Face Hub references
+
+Providence supports versioned dataset references:
+
+```text
+hf://datasets/<owner>/<repo>~<config>:<split>@<revision>
+```
+
+For example:
+
+```text
+hf://datasets/scbirlab/fang-2023-biogen-adme~scaffold-split:train
+```
+
+The revision, configuration, and split are optional where supported by the resolver.
+
+Pinning a dataset to an immutable commit revision improves reproducibility.
 
 ---
 
 ## Working with output columns
 
-By default, `DataPipeline` keeps the original input columns and appends feature columns.
+By default, Aspect retains original columns and adds transformed features.
 
 ```python
 out = pipe(data)
 ```
 
-To keep only feature outputs and selected metadata:
+To retain only transformed features and explicitly selected metadata:
 
 ```python
 pipe = DataPipeline(
@@ -686,10 +876,13 @@ pipe = DataPipeline(
     columns_to_keep=["compound_id"],
 )
 
-out = pipe(data, drop_unused_columns=True)
+out = pipe(
+    data,
+    drop_unused_columns=True,
+)
 ```
 
-You can also provide extra columns at call time:
+Extra columns can also be specified at call time:
 
 ```python
 out = pipe(
@@ -699,35 +892,21 @@ out = pipe(
 )
 ```
 
-After running a pipeline, inspect inferred output shapes:
+Access the underlying output dataset using:
 
 ```python
-print(pipe.data_out_shape)
-```
-
-Example:
-
-```text
-{
-    "compound_id": (),
-    "log_mwt": (1,),
-    "assay_hash": (256,)
-}
+dataset = out.data
+print(dataset.features)
+print(dataset.column_names)
 ```
 
 ---
 
 ## Custom transforms
 
-Custom transforms can be registered using `register_function`.
+Custom transforms can be registered through Aspect's transform registry.
 
-A registered transform should be a factory: it receives configuration arguments and returns a callable with signature:
-
-```python
-fn(data, input_column) -> numpy.ndarray
-```
-
-Example:
+A transform factory receives configuration arguments and returns a callable that operates on data batches.
 
 ```python
 import numpy as np
@@ -751,10 +930,10 @@ pipe = DataPipeline({
 
 out = pipe({
     "mwt": [46.07, 60.10, 78.11],
-})
+}).data
 ```
 
-With arguments:
+### Parameterised transforms
 
 ```python
 @register_function("scale")
@@ -774,22 +953,64 @@ pipe = DataPipeline({
 })
 ```
 
-If you save a pipeline using a custom transform, make sure the module that registers the transform is imported before loading the checkpoint.
+Custom transforms must be registered in the Python process before loading pipelines that reference them.
 
 ---
 
-## Optional chemistry, taxonomy, and deep-learning examples
+## Model integration
 
-### Mixed ADME-style table
+Aspect separates stored feature representations from model-specific runtime inputs.
+
+The output dataset may contain numeric arrays, chemical fingerprints, taxonomic encodings, or other Arrow-compatible values.
+
+For simple numerical models, extract the dataset:
 
 ```python
-from aspect.data import DataPipeline
+features = pipe(data).data
+```
 
+For PyTorch models, use the built-in DataLoader integration:
+
+```python
+loader = pipe.dataloader(
+    batch_size=32,
+    shuffle=True,
+)
+
+for batch in loader:
+    # Batched, collated features
+    pass
+```
+
+This requires the `torch` extra.
+
+Transforms requiring specialised runtime representations can provide collators. These are applied when constructing model batches, allowing features such as molecular graphs to be stored independently from the framework-specific objects consumed by a model.
+
+Custom collators can be provided through the `collators` argument:
+
+```python
+loader = pipe.dataloader(
+    batch_size=32,
+    collators={
+        "custom_feature": custom_collator,
+    },
+)
+```
+
+### Mixed molecular and biological features
+
+Aspect can combine multiple representations in one dataset:
+
+```python
 data = {
     "compound_id": ["cmpd-1", "cmpd-2", "cmpd-3"],
     "smiles": ["CCO", "CCN", "c1ccccc1"],
     "assay": ["solubility", "clearance", "microsome"],
-    "species": ["M. tuberculosis", "E. coli", "S. aureus"],
+    "species": [
+        "Escherichia coli",
+        "Mycobacterium tuberculosis",
+        "Staphylococcus aureus",
+    ],
     "mwt": [46.07, 45.08, 78.11],
     "label": [0.1, 0.4, 0.8],
 }
@@ -812,55 +1033,65 @@ pipe = DataPipeline(
     columns_to_keep=["compound_id"],
 )
 
-features = pipe(data, drop_unused_columns=True)
+features = pipe(
+    data,
+    drop_unused_columns=True,
+).data
 ```
 
-This produces separate feature columns for chemical structure, descriptors, assay identity, species identity, molecular weight, and target label.
+This requires the chemistry and taxonomy extras.
 
-A downstream model adapter can decide whether to:
-
-* concatenate dense arrays;
-* route different columns into different neural-network towers;
-* collate graph-like objects separately;
-* keep labels and metadata separate from model inputs.
+Downstream models can independently consume molecular fingerprints, descriptors, categorical features, and taxonomic encodings, or combine suitable dense features into a common representation.
 
 ---
 
 ## Development
 
-Install development dependencies:
+Install the development dependencies:
 
 ```bash
 pip install -e ".[dev]"
 ```
 
-Run tests:
+Run the test suite:
 
 ```bash
 pytest
 ```
 
-Run the CLI smoke test script:
+Run module doctests:
+
+```bash
+pytest aspect --doctest-modules
+```
+
+Run the CLI integration tests:
 
 ```bash
 bash test/scripts/run-tests.sh
 ```
 
-Run selected doctests:
+Aspect maintains separate GitHub Actions workflows for Python tests and CLI smoke tests.
 
-```bash
-python -m doctest aspect/data.py
-python -m doctest aspect/transform/base.py
-python -m doctest aspect/transform/functions.py
-```
+## Related packages
 
-## Issues, problems, suggestions
+Aspect is part of a small ecosystem for reproducible molecular machine-learning workflows:
 
-Please open an issue on GitHub:
+- [Providence](https://github.com/scbirlab/providence) — Dataset loading, source provenance, and checkpointing.
+- [Eluent](https://github.com/scbirlab/eluent) — Chemistry-aware grouping, splitting, and cross-validation.
+- [Schemist](https://github.com/scbirlab/schemist) — Molecular featurisation and cheminformatics.
+- [Vectome](https://github.com/scbirlab/vectome) — Taxonomic and biological representations.
 
-[https://github.com/scbirlab/aspect/issues](https://github.com/scbirlab/aspect/issues)
+The packages can be used independently or composed into reproducible workflows from source data to model-ready features and evaluation splits.
 
+---
 
-## Documentation
+## Issues and documentation
 
-(To come at [ReadTheDocs](https://aspect.readthedocs.org).)
+Bug reports, feature requests, and contributions are welcome through the [GitHub issue tracker](https://github.com/scbirlab/aspect/issues).
+
+Documentation: [aspect.readthedocs.org](https://aspect.readthedocs.org)
+
+Source code: [github.com/scbirlab/aspect](https://github.com/scbirlab/aspect)
+
+License: MIT.

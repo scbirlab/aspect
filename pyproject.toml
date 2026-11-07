@@ -1,6 +1,6 @@
 [project]
 name = "aspect-data"
-version = "0.0.6"
+version = "0.0.7"
 authors = [
   { name="Eachan Johnson", email="eachan.johnson@crick.ac.uk" },
 ]
@@ -29,21 +29,22 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Programming Language :: Python :: 3 :: Only",
 ]
 
 dependencies = [
   "carabiner-tools[pd,mpl]>=0.0.5.post3",
-  "datasets>=3",
+  "datasets>=3.0.0",
   "filelock",
   "huggingface_hub",
   "numpy",
-  "platformdirs>=4.4.0",
+  "providence>=0.0.2",
   "tqdm",
 ]
 
 [project.optional-dependencies]
-chem = ["schemist>=0.0.6"]
+chem = ["schemist>=0.0.7"]
 torch = ["torch>=2.4"]
 chemprop = ["aspect-data[torch,chem]", "chemprop>=2.1.0"]
 deep = ["transformers"]

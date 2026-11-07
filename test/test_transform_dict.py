@@ -1,8 +1,7 @@
 
 
 from aspect.data import DataPipeline
-from aspect.io import AutoDataset
-
+from providence import DataResolver
 import numpy as np
 
 def test_mapping_preserves_array_columns():
@@ -14,7 +13,7 @@ def test_mapping_preserves_array_columns():
         "y": np.asarray([1., 2.]),
     }
 
-    dataset = AutoDataset.load(data)._dataset
+    dataset = DataResolver(data).data
 
     assert np.allclose(
         dataset["x"],
@@ -40,7 +39,7 @@ def test_pipeline_transforms_array_column():
     })
 
     assert np.allclose(
-        prepared["logx"],
+        prepared.data["logx"],
         np.log([
             [1., 2.],
             [3., 4.],
