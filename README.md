@@ -193,6 +193,7 @@ Install only the features you need:
 | `torch` | PyTorch integration | `pip install "aspect-data[torch]"` |
 | `chemprop` | Chemprop molecular features | `pip install "aspect-data[chemprop]"` |
 | `deep` | Transformer-based embeddings | `pip install "aspect-data[deep]"` |
+| `esm` | ESM2 protein embeddings | `pip install "aspect-data[esm]"` |
 
 ### Install from source
 
@@ -670,6 +671,37 @@ features = pipe(data).data
 ```
 
 Model weights may be downloaded on first use.
+
+### Protein embeddings
+
+Install with:
+
+```bash
+pip install "aspect-data[esm]"
+```
+
+The `esm2` transform embeds amino acid sequences with an [ESM2](https://doi.org/10.1126/science.ade2574) protein language model, mean-pooling the final layer over residue tokens.
+
+```python
+data = {"sequence": ["MKTAYIAKQRQISFVKSHFSRQ", "MSLLTEVETPIRNEWGCRC"]}
+
+pipe = DataPipeline({
+    "protein_embedding": (
+        "sequence",
+        {
+            "name": "esm2",
+            "kwargs": {
+                "model": "facebook/esm2_t12_35M_UR50D",  # 480-d; default
+                "revision": "6fbf070e65b0b7291e7bbcd451118c216cff79d8",
+            },
+        },
+    ),
+})
+
+features = pipe(data).data
+```
+
+Pin `revision` to a Hugging Face commit for reproducible embeddings. Other options: `layer` (default `-1`), `pooling` (`"mean"` or `"cls"`), `batch_size`, `device`, and `long_sequences` (`"truncate"` to 1022 residues, the default, or `"chunk"` for length-weighted overlapping windows). Missing or invalid sequences give zero vectors.
 
 ### Chemprop transforms
 
