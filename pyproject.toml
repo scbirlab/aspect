@@ -44,7 +44,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-chem = ["schemist>=0.1.0"]
+chem = ["schemist>=0.1.1"]
 torch = ["torch>=2.4"]
 chemprop = ["aspect-data[torch,chem]", "chemprop>=2.1.0"]
 deep = ["transformers"]

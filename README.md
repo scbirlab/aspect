@@ -575,6 +575,14 @@ pip install "aspect-data[chem]"
 | `descriptors-2d` | SMILES | 2D molecular descriptors |
 | `descriptors-3d` | SMILES | 3D molecular descriptors |
 
+`descriptors-3d` averages RDKit 3D descriptors over an ETKDG conformer ensemble and appends their standard deviations across conformers. By default it embeds `clip(1 + rotatable bonds, 3, 10)` conformers per molecule, prunes near-duplicates (heavy-atom RMSD < 0.5 Å), and skips force-field minimisation. Options (`n_conformers`, `max_conformers`, `prune_rms_thresh`, `minimize`, `with_std`, `n_threads`, `seed`) go in `kwargs` and are recorded in the transform config:
+
+```python
+pipe = DataPipeline({
+    "desc3d": ("smiles", {"name": "descriptors-3d", "kwargs": {"n_conformers": 20}}),
+})
+```
+
 Example:
 
 ```python
