@@ -8,7 +8,7 @@ if TYPE_CHECKING:
 else:
     Mol = Any
 
-DEFAULT_PH: float = 6.7
+DEFAULT_PH: float = 7.4
 
 
 def _import_schemist():
