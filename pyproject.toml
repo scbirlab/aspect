@@ -1,6 +1,6 @@
 [project]
 name = "aspect-data"
-version = "0.0.7"
+version = "0.1.0"
 authors = [
   { name="Eachan Johnson", email="eachan.johnson@crick.ac.uk" },
 ]
@@ -44,7 +44,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-chem = ["schemist>=0.0.7"]
+chem = ["schemist>=0.1.0"]
 torch = ["torch>=2.4"]
 chemprop = ["aspect-data[torch,chem]", "chemprop>=2.1.0"]
 deep = ["transformers"]

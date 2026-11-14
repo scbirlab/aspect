@@ -36,6 +36,46 @@ DATA_FILENAME: str = "data.pv"
 TRANSFORMED_FILENAME: str = "transformed.pv"
 EXAMPLE_FILENAME: str = "example.parquet"
 
+# Packages whose code determines feature values but which Hugging Face
+# Datasets cannot see when fingerprinting the featurizing `.map()`.
+_FEATURE_BACKENDS: tuple[str, ...] = (
+    "schemist",
+    "rdkit",
+    "descriptastorus",
+    "vectome",
+    "chemprop",
+    "transformers",
+    "torch",
+)
+
+
+def _backend_versions() -> dict[str, str]:
+    """Installed versions of feature-computing backends.
+
+    Passed to the featurizing `.map()` so that upgrading a backend
+    changes the Hugging Face Datasets cache fingerprint, rather than
+    silently reusing features computed with the old backend.
+    Packages that are not installed are omitted.
+
+    Examples
+    ========
+    >>> versions = _backend_versions()
+    >>> set(versions) <= set(_FEATURE_BACKENDS)
+    True
+    >>> all(isinstance(v, str) for v in versions.values())
+    True
+
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    versions = {}
+    for package in _FEATURE_BACKENDS:
+        try:
+            versions[package] = version(package)
+        except PackageNotFoundError:
+            continue
+    return versions
+
 
 def _check_column_presence(
     features: StrOrIterableOfStr,
@@ -398,8 +438,10 @@ class DataPipeline:
     @staticmethod
     def _featurize(
         x: Mapping[str, ArrayLike],
-        column_transforms: Mapping[str, dict]
+        column_transforms: Mapping[str, dict],
+        backend_versions: Mapping[str, str] | None = None
     ) -> dict[str, np.ndarray]:
+        # `backend_versions` is unused here: it is part of the cache key.
 
         column_transforms = {
             k: [ColumnTransform(**d) for d in v]
@@ -519,6 +561,7 @@ class DataPipeline:
                 self._featurize,
                 fn_kwargs={
                     "column_transforms": self.column_transforms_serialized,
+                    "backend_versions": _backend_versions(),
                 },
                 batched=True,
                 batch_size=batch_size,

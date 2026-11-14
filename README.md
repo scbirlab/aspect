@@ -304,6 +304,8 @@ aspect featurize compounds.csv \
     --output features.parquet
 ```
 
+Cached features are keyed on the transform configuration and on the installed versions of the feature backends (`schemist`, `rdkit`, `descriptastorus`, `vectome`, `chemprop`, `transformers`, `torch`). Upgrading any of these recomputes features rather than reusing a stale cache.
+
 ### `aspect write`
 
 Export data from a saved Aspect checkpoint:
