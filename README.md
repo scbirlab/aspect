@@ -1026,6 +1026,8 @@ for batch in loader:
 
 This requires the `torch` extra.
 
+Rows are read with the pipeline's `output_format` (default `"numpy"`), so floating-point features arrive as float32 tensors. A dataset you pass in that already has a format set keeps it.
+
 Transforms requiring specialised runtime representations can provide collators. These are applied when constructing model batches, allowing features such as molecular graphs to be stored independently from the framework-specific objects consumed by a model.
 
 Custom collators can be provided through the `collators` argument:

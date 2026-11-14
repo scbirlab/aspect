@@ -824,6 +824,32 @@ class DataPipeline:
             ]
         return self._resolve_collators(collators)(batch)
 
+    def _apply_output_format(self, dataset):
+        """Apply `output_format` unless the dataset is already formatted.
+
+        Without a format, Arrow rows come back as Python lists and floats,
+        so float32 feature columns are collated as float64.
+
+        Examples
+        ========
+        >>> p = DataPipeline({"h": ("cat", {"name": "hash", "kwargs": {"ndim": 4}})})
+        >>> ds = p({"cat": ["a", "b"]}).data
+        >>> p._apply_output_format(ds)[0]["h"].dtype
+        dtype('float32')
+        >>> p._apply_output_format(ds.with_format("arrow")).format["type"]
+        'arrow'
+
+        """
+        if self.output_format is None:
+            return dataset
+        current = getattr(dataset, "format", None)
+        if isinstance(current, Mapping) and current.get("type") is not None:
+            return dataset
+        return dataset.with_format(
+            self.output_format,
+            **self.output_format_opts,
+        )
+
     def dataloader(
         self,
         dataset=None,
@@ -845,6 +871,7 @@ class DataPipeline:
                 "No processed dataset available. "
                 "Provide `dataset` or call the pipeline first with pipeline(data)."
             )
+        dataset = self._apply_output_format(dataset)
         
         return DataLoader(
             dataset,
