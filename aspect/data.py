@@ -234,7 +234,7 @@ class DataPipeline:
         _version: str = __version__,
         _app: str = app_name
     ):
-        from providence.package_data import CACHE_DIR
+        from .cache import resolve_cache
         self._column_transforms = column_transforms or []
         columns_to_keep = columns_to_keep or []
         if isinstance(columns_to_keep, str):
@@ -247,7 +247,7 @@ class DataPipeline:
         self.output_format_opts = output_format_opts or {}
         self.data_in = None
         self.data_out = None
-        self.cache_dir = cache_dir or CACHE_DIR
+        self.cache_dir = resolve_cache(cache_dir)
         self._data_loaded = False
 
     def __eq__(self, other) -> bool:
@@ -543,32 +543,35 @@ class DataPipeline:
             else:
                 return None
 
-        data_out = (
-            resolved
-            .data
-            .map(
-                _fill_na,
-                fn_kwargs={
-                    "types": {
-                        key: _check_type(f)
-                        for key, f in resolved.data.info.features.items()
+        # Transforms resolve shared downloads (e.g. model weights) from here.
+        from .cache import use_cache
+        with use_cache(cache_dir or self.cache_dir):
+            data_out = (
+                resolved
+                .data
+                .map(
+                    _fill_na,
+                    fn_kwargs={
+                        "types": {
+                            key: _check_type(f)
+                            for key, f in resolved.data.info.features.items()
+                        },
                     },
-                },
-                batched=True,
-                batch_size=batch_size,
-                desc="Filling NaN values",
+                    batched=True,
+                    batch_size=batch_size,
+                    desc="Filling NaN values",
+                )
+                .map(
+                    self._featurize,
+                    fn_kwargs={
+                        "column_transforms": self.column_transforms_serialized,
+                        "backend_versions": _backend_versions(),
+                    },
+                    batched=True,
+                    batch_size=batch_size,
+                    desc="Featurizing",
+                )
             )
-            .map(
-                self._featurize,
-                fn_kwargs={
-                    "column_transforms": self.column_transforms_serialized,
-                    "backend_versions": _backend_versions(),
-                },
-                batched=True,
-                batch_size=batch_size,
-                desc="Featurizing",
-            )
-        )
         data_out = (
             data_out
             .with_format(None)  # guard against tensors

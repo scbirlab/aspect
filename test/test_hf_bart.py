@@ -13,11 +13,12 @@ AGGREGATORS = ["start", "end", "sum", "mean", "median", "max"]
 
 
 def _hf_bart(**kwargs):
-    from aspect.transform.deep_functions import HfBART
+    from aspect.transform.deep_functions import HfBART, _resolve_bart_model, get_device
     try:
-        return HfBART(ref=REF, **kwargs)
+        _resolve_bart_model(REF, str(get_device()))  # transforms load lazily
     except OSError as e:  # no network / hub unavailable
         pytest.skip(f"Could not load {REF}: {e}")
+    return HfBART(ref=REF, **kwargs)
 
 
 def _embed(f, seqs):

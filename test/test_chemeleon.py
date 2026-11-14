@@ -12,10 +12,12 @@ SMILES = ["CC(=O)Oc1ccccc1C(=O)O", "c1ccccc1", "CN1C=NC2=C1C(=O)N(C(=O)N2C)C"]
 @pytest.fixture(scope="module")
 def chemeleon():
     from aspect.transform.chemeleon import CheMeleon
+    f = CheMeleon(device="cpu")
     try:
-        return CheMeleon(device="cpu")
+        f({"smiles": SMILES[:1]}, "smiles")  # weights load on first call
     except OSError as e:  # no network / Zenodo unavailable
         pytest.skip(f"Could not load CheMeleon: {e}")
+    return f
 
 
 def _embed(f, smiles):
@@ -67,9 +69,9 @@ def test_weights_frozen(chemeleon):
 
 def test_pipeline_registration():
     from aspect.data import DataPipeline
+    pipe = DataPipeline({"emb": ("smiles", "chemeleon")})
     try:
-        pipe = DataPipeline({"emb": ("smiles", "chemeleon")})
+        out = pipe({"smiles": SMILES}).data
     except OSError as e:
         pytest.skip(f"Could not load CheMeleon: {e}")
-    out = pipe({"smiles": SMILES}).data
     assert np.asarray(out["emb"]).shape == (3, 2048)
