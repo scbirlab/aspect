@@ -20,10 +20,21 @@ def get_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-@cache
 def _resolve_bart_model(
     ref: str,
-    device: str
+    device: str,
+    cache_dir: str | None = None
+) -> Tuple[PreTrainedTokenizerBase, PreTrainedModel]:
+    """Seq2seq tokenizer and model from the shared cache (see `aspect.cache`)."""
+    from ..cache import hub_cache_dir
+    return _load_bart_model(ref, device, cache_dir or hub_cache_dir())
+
+
+@cache
+def _load_bart_model(
+    ref: str,
+    device: str,
+    cache_dir: str
 ) -> Tuple[PreTrainedTokenizerBase, PreTrainedModel]:
     """Load (and memoize) a seq2seq tokenizer and model in eval mode.
 
@@ -33,8 +44,9 @@ def _resolve_bart_model(
     """
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
     import torch
-    model = AutoModelForSeq2SeqLM.from_pretrained(ref)
-    return AutoTokenizer.from_pretrained(ref), model.to(torch.device(device)).eval()
+    model = AutoModelForSeq2SeqLM.from_pretrained(ref, cache_dir=cache_dir)
+    tokenizer = AutoTokenizer.from_pretrained(ref, cache_dir=cache_dir)
+    return tokenizer, model.to(torch.device(device)).eval()
 
 
 def _tokenize_for_embedding(
@@ -108,6 +120,10 @@ def HfBART(
     ref: str,
     aggregator: StrOrIterableOfStr = "mean",
     batch_size: int = 64,
+    clean_smiles: bool = True,
+    desalt: bool = True,
+    protonate: bool = True,
+    protonation_pH: float = 6.7
 ) -> Callable:
     """Encoder and decoder embeddings from a Hugging Face BART-style model.
 
@@ -122,6 +138,22 @@ def HfBART(
         Maximum strings per forward pass. Inputs are length-sorted before
         batching to limit padding; this bounds memory regardless of how many
         rows the transform is handed.
+
+    The model is loaded on first call, from the shared cache (CLI `--cache`,
+    `$PROVIDENCE_CACHE`, or the platform default; see `aspect.cache`), so
+    constructing the transform downloads nothing.
+    clean_smiles : bool
+        Treat inputs as SMILES and canonicalize them before tokenizing, with
+        `desalt` and `protonate` applied. Default: `True`. SMILES that fail
+        to parse are embedded as `<unk>`. **Set `False` for non-SMILES text.**
+    desalt : bool
+        With `clean_smiles`, keep only the parent fragment (schemist / RDKit
+        `FragmentParent`). Default: `True`.
+    protonate : bool
+        With `clean_smiles`, set the dominant protonation state at
+        `protonation_pH` (schemist / Dimorphite-DL). Default: `True`.
+    protonation_pH : float
+        pH for `protonate`. Default: 6.7.
 
     Returns
     =======
@@ -148,8 +180,6 @@ def HfBART(
         raise ValueError(f"Requested aggregators do not exist: {incorrect_agg}")
     aggregators = [embedding_aggregators[a] for a in aggregators]
     device = str(get_device())
-    tokenizer, model = _resolve_bart_model(ref, device)
-    width = 2 * len(aggregators) * model.config.d_model
 
     def _aggregated_embedding(x, mask) -> np.ndarray:
         return np.concatenate([
@@ -157,6 +187,7 @@ def HfBART(
         ], axis=-1)
 
     def _embed_batch(inputs: list) -> np.ndarray:
+        tokenizer, model = _resolve_bart_model(ref, device)  # memoized
         tokenized_inputs = _tokenize_for_embedding(
             inputs,
             tokenizer=tokenizer,
@@ -180,6 +211,23 @@ def HfBART(
         input_column: str
     ) -> np.ndarray:
         inputs = list(data[input_column])
+        if clean_smiles:
+            from .cleaning import clean_smiles as _clean
+            cleaned = _clean(
+                inputs,
+                desalt=desalt,
+                protonate=protonate,
+                protonation_pH=protonation_pH,
+            )
+            n_invalid = sum(c is None for c in cleaned)
+            if n_invalid > 0:
+                print_err(
+                    f"[WARN] hf-bart: {n_invalid} missing or invalid SMILES "
+                    "embedded as <unk>."
+                )
+            inputs = cleaned
+        _, model = _resolve_bart_model(ref, device)
+        width = 2 * len(aggregators) * model.config.d_model
         out = np.zeros((len(inputs), width), dtype=np.float32)
         order = np.argsort(
             [len(x) if isinstance(x, str) else 0 for x in inputs],
@@ -209,19 +257,36 @@ def _import_esm_backend():
     return torch, AutoTokenizer, EsmModel
 
 
-@cache
 def _load_esm2(
     model: str,
     revision: str | None,
-    device: str
+    device: str,
+    cache_dir: str | None = None
+):
+    """ESM2 tokenizer and encoder from the shared cache (see `aspect.cache`)."""
+    from ..cache import hub_cache_dir
+    return _load_esm2_cached(model, revision, device, cache_dir or hub_cache_dir())
+
+
+@cache
+def _load_esm2_cached(
+    model: str,
+    revision: str | None,
+    device: str,
+    cache_dir: str
 ):
     """Load (and memoize) an ESM2 tokenizer and fp32 encoder in eval mode."""
     torch, AutoTokenizer, EsmModel = _import_esm_backend()
-    tokenizer = AutoTokenizer.from_pretrained(model, revision=revision)
+    tokenizer = AutoTokenizer.from_pretrained(
+        model,
+        revision=revision,
+        cache_dir=cache_dir,
+    )
     encoder = EsmModel.from_pretrained(
         model,
         revision=revision,
         add_pooling_layer=False,
+        cache_dir=cache_dir,
     )
     encoder = encoder.float().to(torch.device(device)).eval()
     return tokenizer, encoder
@@ -327,6 +392,10 @@ def ESM2(
     chunk_overlap : int
         Window overlap in residues for `long_sequences="chunk"`.
 
+    The model is loaded on first call, from the shared cache (CLI `--cache`,
+    `$PROVIDENCE_CACHE`, or the platform default; see `aspect.cache`), so
+    constructing the transform downloads nothing.
+
     Returns
     =======
     Callable
@@ -353,10 +422,9 @@ def ESM2(
     if revision is None:
         _warn_unpinned(model)
     device = str(device or get_device())
-    tokenizer, encoder = _load_esm2(model, revision, device)
-    hidden_size = encoder.config.hidden_size
 
     def _embed_batch(seqs: list[str]) -> np.ndarray:
+        tokenizer, encoder = _load_esm2(model, revision, device)  # memoized
         tokenized = tokenizer(
             seqs,
             padding=True,
@@ -387,6 +455,8 @@ def ESM2(
         input_column: str
     ) -> np.ndarray:
         raw = list(data[input_column])
+        _, encoder = _load_esm2(model, revision, device)
+        hidden_size = encoder.config.hidden_size
         out = np.zeros((len(raw), hidden_size), dtype=np.float32)
         windows, owners, weights = [], [], []
         n_invalid, n_long = 0, 0

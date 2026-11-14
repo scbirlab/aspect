@@ -13,11 +13,12 @@ AGGREGATORS = ["start", "end", "sum", "mean", "median", "max"]
 
 
 def _hf_bart(**kwargs):
-    from aspect.transform.deep_functions import HfBART
+    from aspect.transform.deep_functions import HfBART, _resolve_bart_model, get_device
     try:
-        return HfBART(ref=REF, **kwargs)
+        _resolve_bart_model(REF, str(get_device()))  # transforms load lazily
     except OSError as e:  # no network / hub unavailable
         pytest.skip(f"Could not load {REF}: {e}")
+    return HfBART(ref=REF, **kwargs)
 
 
 def _embed(f, seqs):
@@ -65,3 +66,20 @@ def test_batches_are_bounded_and_order_preserved():
 def test_invalid_batch_size():
     with pytest.raises(ValueError):
         _hf_bart(batch_size=0)
+
+
+def test_clean_smiles_desalts_and_protonates():
+    pytest.importorskip("schemist")
+    salt, parent = "CC(=O)O.[Na+]", "CC(=O)[O-]"  # acetate at pH 6.7
+    a, b = _embed(_hf_bart(), [salt, parent])
+    assert np.allclose(a, b, atol=1e-6, rtol=0)
+    a, b = _embed(_hf_bart(clean_smiles=False), [salt, parent])
+    assert not np.allclose(a, b)
+
+
+def test_clean_smiles_invalid_is_unk():
+    pytest.importorskip("schemist")
+    x = _embed(_hf_bart(), ["nonsense", "CCO"])
+    assert np.all(np.isfinite(x))
+    unk = _embed(_hf_bart(clean_smiles=False), [None])[0]
+    assert np.allclose(x[0], unk, atol=1e-6, rtol=0)
