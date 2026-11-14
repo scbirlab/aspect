@@ -29,4 +29,9 @@ jobs:
         pip install -e .[dev]
     - name: Test CLI
       run: |
-        bash test/scripts/run-tests.sh
+        set -euox pipefail
+        for f in test/scripts/*.sh
+        do
+          bash "$f"
+        done
+        >&2 echo "[INFO] SUCCESS!"
