@@ -108,6 +108,10 @@ def HfBART(
     ref: str,
     aggregator: StrOrIterableOfStr = "mean",
     batch_size: int = 64,
+    clean_smiles: bool = True,
+    desalt: bool = True,
+    protonate: bool = True,
+    protonation_pH: float = 6.7
 ) -> Callable:
     """Encoder and decoder embeddings from a Hugging Face BART-style model.
 
@@ -122,6 +126,18 @@ def HfBART(
         Maximum strings per forward pass. Inputs are length-sorted before
         batching to limit padding; this bounds memory regardless of how many
         rows the transform is handed.
+    clean_smiles : bool
+        Treat inputs as SMILES and canonicalize them before tokenizing, with
+        `desalt` and `protonate` applied. Default: `True`. SMILES that fail
+        to parse are embedded as `<unk>`. **Set `False` for non-SMILES text.**
+    desalt : bool
+        With `clean_smiles`, keep only the parent fragment (schemist / RDKit
+        `FragmentParent`). Default: `True`.
+    protonate : bool
+        With `clean_smiles`, set the dominant protonation state at
+        `protonation_pH` (schemist / Dimorphite-DL). Default: `True`.
+    protonation_pH : float
+        pH for `protonate`. Default: 6.7.
 
     Returns
     =======
@@ -180,6 +196,21 @@ def HfBART(
         input_column: str
     ) -> np.ndarray:
         inputs = list(data[input_column])
+        if clean_smiles:
+            from .cleaning import clean_smiles as _clean
+            cleaned = _clean(
+                inputs,
+                desalt=desalt,
+                protonate=protonate,
+                protonation_pH=protonation_pH,
+            )
+            n_invalid = sum(c is None for c in cleaned)
+            if n_invalid > 0:
+                print_err(
+                    f"[WARN] hf-bart: {n_invalid} missing or invalid SMILES "
+                    "embedded as <unk>."
+                )
+            inputs = cleaned
         out = np.zeros((len(inputs), width), dtype=np.float32)
         order = np.argsort(
             [len(x) if isinstance(x, str) else 0 for x in inputs],

@@ -5,6 +5,7 @@ def _load_all():
         from . import (
             functions, 
             chemprop,
+            chemeleon,
             deep_functions 
         )  # importing populates FUNCTION_REGISTRY as a side effect
     except (ImportError, NameError) as e:

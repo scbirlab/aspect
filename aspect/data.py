@@ -40,6 +40,7 @@ EXAMPLE_FILENAME: str = "example.parquet"
 # Datasets cannot see when fingerprinting the featurizing `.map()`.
 _FEATURE_BACKENDS: tuple[str, ...] = (
     "schemist",
+    "dimorphite_dl",
     "rdkit",
     "descriptastorus",
     "vectome",
