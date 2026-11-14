@@ -192,7 +192,8 @@ Install only the features you need:
 | `bio` | Taxonomic fingerprints via Vectome | `pip install "aspect-data[bio]"` |
 | `torch` | PyTorch integration | `pip install "aspect-data[torch]"` |
 | `chemprop` | Chemprop molecular features | `pip install "aspect-data[chemprop]"` |
-| `deep` | Transformer-based embeddings | `pip install "aspect-data[deep]"` |
+| `chemeleon` | Frozen CheMeleon molecular embeddings | `pip install "aspect-data[chemeleon]"` |
+| `deep` | Transformer-based SMILES/text embeddings (includes `chem`) | `pip install "aspect-data[deep]"` |
 | `esm` | ESM2 protein embeddings | `pip install "aspect-data[esm]"` |
 
 ### Install from source
@@ -662,6 +663,7 @@ pipe = DataPipeline({
             "kwargs": {
                 "ref": "facebook/bart-base",
                 "aggregator": ["mean", "max"],
+                "clean_smiles": False,  # free text, not SMILES
             },
         },
     ),
@@ -671,6 +673,8 @@ features = pipe(data).data
 ```
 
 Inputs are embedded in length-sorted chunks of `batch_size` strings (default 64), and aggregators ignore padding tokens, so memory is bounded and embeddings do not depend on batch composition. Model weights may be downloaded on first use.
+
+By default inputs are treated as SMILES and cleaned before tokenizing: canonicalized, desalted, and set to their dominant protonation state at pH 6.7 (`clean_smiles=True`, `desalt=True`, `protonate=True`, `protonation_pH=6.7`). Inputs that fail to parse are embedded as `<unk>`, so **set `"clean_smiles": False` for free text**, as in the example above.
 
 ### Protein embeddings
 
@@ -714,6 +718,23 @@ pip install "aspect-data[chemprop]"
 The `chemprop-mol` transform prepares molecular datapoints for Chemprop-style graph models.
 
 Molecular graphs generally require model-specific batching. Aspect separates dataset storage from runtime collation so graph representations can be reconstructed when needed.
+
+### CheMeleon embeddings
+
+Install with:
+
+```bash
+pip install "aspect-data[chemeleon]"
+```
+
+The `chemeleon` transform embeds SMILES with the frozen message-passing encoder of [CheMeleon](https://doi.org/10.48550/arXiv.2506.15792), a Chemprop D-MPNN pre-trained on Mordred descriptors, giving 2048-d mean-aggregated vectors.
+
+```python
+pipe = DataPipeline({"chemeleon": ("smiles", "chemeleon")})
+features = pipe(data).data
+```
+
+Weights are downloaded once from [Zenodo](https://zenodo.org/records/15460715) to `~/.chemprop/chemeleon_mp.pt` (shared with `chemprop train --from-foundation CheMeleon`) and verified by SHA-256. By default SMILES are desalted to the parent fragment and set to their dominant protonation state at pH 6.7 (`desalt=True`, `protonate=True`, `protonation_pH=6.7`), so `CC(=O)O.[Na+]`, `CC(=O)O` and `CC(=O)[O-]` give the same vector; set `desalt` and `protonate` to `False` to match upstream `CheMeleonFingerprint` exactly. Other options: `batch_size` (default 256) and `device`. Missing or invalid SMILES give zero vectors.
 
 ---
 
