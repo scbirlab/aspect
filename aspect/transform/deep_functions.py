@@ -20,24 +20,21 @@ def get_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def _index_into(x: ArrayLike, i: int):
-    return x[:,i,:]
+@cache
+def _resolve_bart_model(
+    ref: str,
+    device: str
+) -> Tuple[PreTrainedTokenizerBase, PreTrainedModel]:
+    """Load (and memoize) a seq2seq tokenizer and model in eval mode.
 
+    Not wrapped in `torch.compile`: with transformers >= 5 the output-capturing
+    hooks are not graph-safe, so compilation fails on the first forward pass.
 
-def _get_value_from_tuple(f: Callable, **kwargs):
-    partial_f = partial(f, **kwargs)
-
-    def _f(*args, **fkwargs):
-        return partial_f(*args, **fkwargs).values
-
-    return _f
-
-
-def _resolve_bart_model(ref: str) -> Tuple[PreTrainedTokenizerBase, PreTrainedModel]:
+    """
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
     import torch
     model = AutoModelForSeq2SeqLM.from_pretrained(ref)
-    return AutoTokenizer.from_pretrained(ref), torch.compile(model, fullgraph=True).to(get_device())
+    return AutoTokenizer.from_pretrained(ref), model.to(torch.device(device)).eval()
 
 
 def _tokenize_for_embedding(
@@ -70,12 +67,69 @@ def _tokenize_for_embedding(
     }
 
 
+def _masked_aggregators(torch) -> dict[str, Callable]:
+    """Token aggregators over [B, T, H] hidden states that ignore padding.
+
+    `mask` is [B, T] with 1 for real tokens and 0 for padding.
+
+    """
+    def _first(x, mask):
+        idx = mask.argmax(dim=1)
+        return x[torch.arange(x.shape[0], device=x.device), idx]
+
+    def _last(x, mask):
+        idx = mask.shape[1] - 1 - mask.flip(dims=(1, )).argmax(dim=1)
+        return x[torch.arange(x.shape[0], device=x.device), idx]
+
+    def _sum(x, mask):
+        return (x * mask.unsqueeze(-1).to(x.dtype)).sum(dim=1)
+
+    def _mean(x, mask):
+        return _sum(x, mask) / mask.sum(dim=1, keepdim=True).to(x.dtype)
+
+    def _median(x, mask):
+        return x.masked_fill(mask.unsqueeze(-1) == 0, float("nan")).nanmedian(dim=1).values
+
+    def _max(x, mask):
+        return x.masked_fill(mask.unsqueeze(-1) == 0, float("-inf")).max(dim=1).values
+
+    return {
+        "start": _first,
+        "end": _last,
+        "sum": _sum,
+        "mean": _mean,
+        "median": _median,
+        "max": _max,
+    }
+
+
 @register_function("hf-bart")
 def HfBART(
     ref: str,
-    aggregator: StrOrIterableOfStr = "mean"
-) -> np.ndarray:
+    aggregator: StrOrIterableOfStr = "mean",
+    batch_size: int = 64,
+) -> Callable:
+    """Encoder and decoder embeddings from a Hugging Face BART-style model.
 
+    Parameters
+    ==========
+    ref : str
+        Hugging Face seq2seq checkpoint.
+    aggregator : str or list of str
+        Token aggregation(s): "start", "end", "sum", "mean", "median", "max".
+        Padding tokens are excluded, so results do not depend on batching.
+    batch_size : int
+        Maximum strings per forward pass. Inputs are length-sorted before
+        batching to limit padding; this bounds memory regardless of how many
+        rows the transform is handed.
+
+    Returns
+    =======
+    Callable
+        Function mapping (data, input_column) → float32 np.ndarray
+        [N, 2 * n_aggregators * hidden_size] (encoder, then decoder).
+
+    """
     try:
         from transformers import PreTrainedTokenizerBase, PreTrainedModel
     except ImportError:
@@ -83,62 +137,58 @@ def HfBART(
     else:
         import torch
 
-    EMBEDDING_AGGREGATORS = {
-        "start": partial(_index_into, i=0),
-        "end": partial(_index_into, i=-1),
-        "sum": partial(torch.sum, dim=-2),
-        "mean": partial(torch.mean, dim=-2),
-        "median": _get_value_from_tuple(torch.median, dim=-2),
-        "max": _get_value_from_tuple(torch.max, dim=-2),
-    }
-    DEFAULT_AGGREGATOR = EMBEDDING_AGGREGATORS["mean"]
-
-    def _aggregated_embedding(
-        x: torch.Tensor, 
-        aggregators: Iterable[Callable] = (DEFAULT_AGGREGATOR, )
-    ):
-        aggregated = [
-            a(x).detach().cpu().numpy() for a in aggregators
-        ]
-
-        return np.concatenate(aggregated, axis=-1)
-
-
+    if batch_size < 1:
+        raise ValueError(f"batch_size must be >= 1, got {batch_size}.")
+    embedding_aggregators = _masked_aggregators(torch)
     aggregators = [a.casefold() for a in cast(aggregator, to=list)]
     incorrect_agg = [
-        a for a in aggregators if a not in EMBEDDING_AGGREGATORS
+        a for a in aggregators if a not in embedding_aggregators
     ]
     if len(incorrect_agg) > 0:
         raise ValueError(f"Requested aggregators do not exist: {incorrect_agg}")
-    else:
-        aggregators = [EMBEDDING_AGGREGATORS[a] for a in aggregators]
-    tokenizer, model = _resolve_bart_model(ref)
+    aggregators = [embedding_aggregators[a] for a in aggregators]
+    device = str(get_device())
+    tokenizer, model = _resolve_bart_model(ref, device)
+    width = 2 * len(aggregators) * model.config.d_model
+
+    def _aggregated_embedding(x, mask) -> np.ndarray:
+        return np.concatenate([
+            a(x, mask).float().cpu().numpy() for a in aggregators
+        ], axis=-1)
+
+    def _embed_batch(inputs: list) -> np.ndarray:
+        tokenized_inputs = _tokenize_for_embedding(
+            inputs,
+            tokenizer=tokenizer,
+        )
+        mask = tokenized_inputs["attention_mask"]
+        with torch.no_grad():
+            outputs = model(
+                **tokenized_inputs,
+                decoder_input_ids=tokenized_inputs["input_ids"],
+                decoder_attention_mask=mask,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+        return np.concatenate([
+            _aggregated_embedding(outputs.encoder_hidden_states[-1], mask),
+            _aggregated_embedding(outputs.decoder_hidden_states[-1], mask),
+        ], axis=-1)
 
     def _hf_bart(
         data: Mapping[str, Iterable],
         input_column: str
     ) -> np.ndarray:
-        tokenized_inputs = _tokenize_for_embedding(
-            data[input_column],
-            tokenizer=tokenizer,
+        inputs = list(data[input_column])
+        out = np.zeros((len(inputs), width), dtype=np.float32)
+        order = np.argsort(
+            [len(x) if isinstance(x, str) else 0 for x in inputs],
+            kind="stable",
         )
-        model.eval()
-        with torch.no_grad():
-            outputs = model(
-                **tokenized_inputs, 
-                decoder_input_ids=tokenized_inputs['input_ids'],
-                output_hidden_states=True,
-                return_dict=True,
-            )
-        enc_last = _aggregated_embedding(
-            outputs.encoder_hidden_states[-1],
-            aggregators=aggregators,
-        )
-        dec_last = _aggregated_embedding(
-            outputs.decoder_hidden_states[-1],
-            aggregators=aggregators,
-        )
-        return np.concatenate([enc_last, dec_last], axis=-1)
+        for start in range(0, len(order), batch_size):
+            idx = order[start:(start + batch_size)]
+            out[idx] = _embed_batch([inputs[i] for i in idx])
+        return out
 
     return _hf_bart
 

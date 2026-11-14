@@ -670,7 +670,7 @@ pipe = DataPipeline({
 features = pipe(data).data
 ```
 
-Model weights may be downloaded on first use.
+Inputs are embedded in length-sorted chunks of `batch_size` strings (default 64), and aggregators ignore padding tokens, so memory is bounded and embeddings do not depend on batch composition. Model weights may be downloaded on first use.
 
 ### Protein embeddings
 
