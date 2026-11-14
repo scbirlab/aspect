@@ -193,6 +193,7 @@ Install only the features you need:
 | `torch` | PyTorch integration | `pip install "aspect-data[torch]"` |
 | `chemprop` | Chemprop molecular features | `pip install "aspect-data[chemprop]"` |
 | `deep` | Transformer-based embeddings | `pip install "aspect-data[deep]"` |
+| `esm` | ESM2 protein embeddings | `pip install "aspect-data[esm]"` |
 
 ### Install from source
 
@@ -303,6 +304,8 @@ aspect featurize compounds.csv \
     --cache .cache \
     --output features.parquet
 ```
+
+Cached features are keyed on the transform configuration and on the installed versions of the feature backends (`schemist`, `rdkit`, `descriptastorus`, `vectome`, `chemprop`, `transformers`, `torch`). Upgrading any of these recomputes features rather than reusing a stale cache.
 
 ### `aspect write`
 
@@ -573,6 +576,14 @@ pip install "aspect-data[chem]"
 | `descriptors-2d` | SMILES | 2D molecular descriptors |
 | `descriptors-3d` | SMILES | 3D molecular descriptors |
 
+`descriptors-3d` averages RDKit 3D descriptors over an ETKDG conformer ensemble and appends their standard deviations across conformers. By default it embeds `clip(1 + rotatable bonds, 3, 10)` conformers per molecule, prunes near-duplicates (heavy-atom RMSD < 0.5 Å), and skips force-field minimisation. Options (`n_conformers`, `max_conformers`, `prune_rms_thresh`, `minimize`, `with_std`, `n_threads`, `seed`) go in `kwargs` and are recorded in the transform config:
+
+```python
+pipe = DataPipeline({
+    "desc3d": ("smiles", {"name": "descriptors-3d", "kwargs": {"n_conformers": 20}}),
+})
+```
+
 Example:
 
 ```python
@@ -659,7 +670,38 @@ pipe = DataPipeline({
 features = pipe(data).data
 ```
 
-Model weights may be downloaded on first use.
+Inputs are embedded in length-sorted chunks of `batch_size` strings (default 64), and aggregators ignore padding tokens, so memory is bounded and embeddings do not depend on batch composition. Model weights may be downloaded on first use.
+
+### Protein embeddings
+
+Install with:
+
+```bash
+pip install "aspect-data[esm]"
+```
+
+The `esm2` transform embeds amino acid sequences with an [ESM2](https://doi.org/10.1126/science.ade2574) protein language model, mean-pooling the final layer over residue tokens.
+
+```python
+data = {"sequence": ["MKTAYIAKQRQISFVKSHFSRQ", "MSLLTEVETPIRNEWGCRC"]}
+
+pipe = DataPipeline({
+    "protein_embedding": (
+        "sequence",
+        {
+            "name": "esm2",
+            "kwargs": {
+                "model": "facebook/esm2_t12_35M_UR50D",  # 480-d; default
+                "revision": "6fbf070e65b0b7291e7bbcd451118c216cff79d8",
+            },
+        },
+    ),
+})
+
+features = pipe(data).data
+```
+
+Pin `revision` to a Hugging Face commit for reproducible embeddings. Other options: `layer` (default `-1`), `pooling` (`"mean"` or `"cls"`), `batch_size`, `device`, and `long_sequences` (`"truncate"` to 1022 residues, the default, or `"chunk"` for length-weighted overlapping windows). Missing or invalid sequences give zero vectors.
 
 ### Chemprop transforms
 
@@ -983,6 +1025,8 @@ for batch in loader:
 ```
 
 This requires the `torch` extra.
+
+Rows are read with the pipeline's `output_format` (default `"numpy"`), so floating-point features arrive as float32 tensors. A dataset you pass in that already has a format set keeps it.
 
 Transforms requiring specialised runtime representations can provide collators. These are applied when constructing model batches, allowing features such as molecular graphs to be stored independently from the framework-specific objects consumed by a model.
 

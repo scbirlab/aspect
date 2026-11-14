@@ -222,13 +222,71 @@ Descriptors2D = register_function("descriptors-2d")(
     ),
 )
 
-Descriptors3D = register_function("descriptors-3d")(
-    partial(
-        chemical_feature,
+@register_function("descriptors-3d")
+def Descriptors3D(
+    n_conformers: int | str = "auto",
+    max_conformers: int = 10,
+    prune_rms_thresh: float = 0.5,
+    minimize: bool = False,
+    with_std: bool | None = None,
+    n_threads: int = 1,
+    seed: int = 42,
+) -> Callable:
+    """Conformer-averaged RDKit 3D descriptors from SMILES.
+
+    Conformers are embedded with ETKDG and per-conformer RDKit 3D
+    descriptors are averaged (unweighted). Any non-default options are
+    recorded in the transform config, and therefore in the cache key.
+
+    Parameters
+    ==========
+    n_conformers : int or "auto"
+        `"auto"` embeds ``clip(1 + n_rotatable_bonds, 3, max_conformers)``
+        conformers. An int overrides `"auto"` and `max_conformers`.
+    max_conformers : int
+        Cap for `"auto"`.
+    prune_rms_thresh : float
+        Heavy-atom RMSD (Å) for pruning near-duplicate conformers. Descriptors
+        are averaged over survivors.
+    minimize : bool
+        MMFF-minimize conformers before computing descriptors.
+    with_std : bool, optional
+        Append per-descriptor standard deviations across conformers. Default
+        `True` unless `n_conformers == 1`. When `True` the columns are always
+        present (0 for a single surviving conformer), so output width never
+        depends on the molecule.
+    n_threads : int
+        Embedding threads; 0 uses all cores. Results do not depend on it.
+    seed : int
+        Embedding random seed.
+
+    Returns
+    =======
+    Callable
+        Function mapping (data, input_column) → np.ndarray [N, n_features].
+        Molecules that fail to parse or embed get a zero vector.
+
+    Examples
+    ========
+    >>> f = Descriptors3D()
+    >>> f({"smiles": ["CCO", "CCCCCCO", "not-a-smiles"]}, "smiles").shape
+    (3, 22)
+    >>> Descriptors3D(n_conformers=1)({"smiles": ["CCO"]}, "smiles").shape
+    (1, 11)
+
+    """
+    return chemical_feature(
         "3d",
         return_dataframe=False,
-    ),
-)
+        n_conformers=n_conformers,
+        max_conformers=max_conformers,
+        prune_rms_thresh=prune_rms_thresh,
+        minimize=minimize,
+        with_std=with_std,
+        n_threads=n_threads,
+        seed=seed,
+    )
+
 
 @register_function("vectome-fingerprint")
 def VectomeFingerprint(
