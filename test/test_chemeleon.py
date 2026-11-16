@@ -48,16 +48,19 @@ def test_invalid_smiles_are_zero(chemeleon):
     assert np.all(x[1:] == 0)
 
 
-def test_desalt_protonate(chemeleon):
-    from aspect.transform.chemeleon import CheMeleon
-    salt, parent = "CC(=O)O.[Na+]", "CC(=O)[O-]"  # acetate at pH 6.7
+def test_smiles_used_as_given(chemeleon):
+    salt, parent = "CC(=O)O.[Na+]", "CC(=O)[O-]"
     a, b = _embed(chemeleon, [salt, parent])
-    assert np.allclose(a, b, atol=1e-6, rtol=0)
-    a, b = _embed(chemeleon, ["CC(=O)O", parent])
-    assert np.allclose(a, b, atol=1e-6, rtol=0)
-    raw = CheMeleon(device="cpu", desalt=False, protonate=False)
-    a, b = _embed(raw, [salt, parent])
     assert not np.allclose(a, b)
+
+
+def test_chained_clean_smiles(chemeleon):
+    from aspect.transform.cleaning import CleanSmiles
+    salt, parent = "CC(=O)O.[Na+]", "CC(=O)[O-]"  # acetate at pH 7.4
+    cleaned = CleanSmiles()({"s": [salt, "CC(=O)O", parent]}, "s")
+    a, b, c = _embed(chemeleon, cleaned)
+    assert np.allclose(a, c, atol=1e-6, rtol=0)
+    assert np.allclose(b, c, atol=1e-6, rtol=0)
 
 
 def test_weights_frozen(chemeleon):

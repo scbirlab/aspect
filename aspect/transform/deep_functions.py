@@ -120,10 +120,6 @@ def HfBART(
     ref: str,
     aggregator: StrOrIterableOfStr = "mean",
     batch_size: int = 64,
-    clean_smiles: bool = True,
-    desalt: bool = True,
-    protonate: bool = True,
-    protonation_pH: float = 6.7
 ) -> Callable:
     """Encoder and decoder embeddings from a Hugging Face BART-style model.
 
@@ -141,19 +137,10 @@ def HfBART(
 
     The model is loaded on first call, from the shared cache (CLI `--cache`,
     `$PROVIDENCE_CACHE`, or the platform default; see `aspect.cache`), so
-    constructing the transform downloads nothing.
-    clean_smiles : bool
-        Treat inputs as SMILES and canonicalize them before tokenizing, with
-        `desalt` and `protonate` applied. Default: `True`. SMILES that fail
-        to parse are embedded as `<unk>`. **Set `False` for non-SMILES text.**
-    desalt : bool
-        With `clean_smiles`, keep only the parent fragment (schemist / RDKit
-        `FragmentParent`). Default: `True`.
-    protonate : bool
-        With `clean_smiles`, set the dominant protonation state at
-        `protonation_pH` (schemist / Dimorphite-DL). Default: `True`.
-    protonation_pH : float
-        pH for `protonate`. Default: 6.7.
+    constructing the transform downloads nothing. Inputs are tokenized as
+    given, so it works on any text; chain `clean-smiles` before it to
+    canonicalize, desalt or protonate SMILES. Missing inputs (including
+    SMILES `clean-smiles` could not parse) are embedded as `<unk>`.
 
     Returns
     =======
@@ -211,21 +198,6 @@ def HfBART(
         input_column: str
     ) -> np.ndarray:
         inputs = list(data[input_column])
-        if clean_smiles:
-            from .cleaning import clean_smiles as _clean
-            cleaned = _clean(
-                inputs,
-                desalt=desalt,
-                protonate=protonate,
-                protonation_pH=protonation_pH,
-            )
-            n_invalid = sum(c is None for c in cleaned)
-            if n_invalid > 0:
-                print_err(
-                    f"[WARN] hf-bart: {n_invalid} missing or invalid SMILES "
-                    "embedded as <unk>."
-                )
-            inputs = cleaned
         _, model = _resolve_bart_model(ref, device)
         width = 2 * len(aggregators) * model.config.d_model
         out = np.zeros((len(inputs), width), dtype=np.float32)

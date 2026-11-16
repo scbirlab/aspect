@@ -32,6 +32,7 @@ DEFAULT_FORMAT: str = "numpy"
 
 SCHEMA_VERSION: int = 1
 CONFIG_FILENAME: str = "config.json"
+MISSING_PREFIX: str = "missing:"
 DATA_FILENAME: str = "data.pv"
 TRANSFORMED_FILENAME: str = "transformed.pv"
 EXAMPLE_FILENAME: str = "example.parquet"
@@ -47,6 +48,9 @@ _FEATURE_BACKENDS: tuple[str, ...] = (
     "chemprop",
     "transformers",
     "torch",
+    "atom-jepa",
+    "e3nn",
+    "torch-geometric",
 )
 
 
@@ -99,18 +103,29 @@ def _fill_na(
     x: Mapping[str, Any],
     types: Mapping[str, Any]
 ) -> dict[str, Any]:
-    """Fill missing values with typed missing.
+    """Make missing values explicit for transforms to consume.
 
-    For example, numeric filled with zeros, and strings filled with `""`.
+    Numeric nulls become NaN, so they propagate through numeric transforms
+    (e.g. `log`) instead of becoming valid-looking numbers. Give integer
+    columns that contain nulls a float type in `types`, so that every batch
+    is float. Integer columns without nulls are left exact.
+    String nulls become `""`, which molecular featurizers treat as an
+    unparseable SMILES. Other types are left alone.
+
     Examples
     ========
     _fill_na fills by dtype:
 
     >>> _fill_na(
     ...     {"a": [1, None, 3], "b": ["x", None, "z"], "c": [1.0, None, 3.0]},
-    ...     {"a": "int64", "b": "string", "c": "float32"}
+    ...     {"a": "float64", "b": "string", "c": "float32"}
     ... )
-    {'a': [1, 0, 3], 'b': ['x', '', 'z'], 'c': [1.0, 0.0, 3.0]}
+    {'a': [1.0, nan, 3.0], 'b': ['x', '', 'z'], 'c': [1.0, nan, 3.0]}
+
+    _fill_na leaves integers without nulls exact:
+
+    >>> _fill_na({"a": [2 ** 53 + 1]}, {"a": "int64"})
+    {'a': [9007199254740993]}
 
     _fill_na unknown dtype fills None:
 
@@ -119,13 +134,18 @@ def _fill_na(
 
     """
     for key in x:
-        this_type = types[key]
+        this_type = types.get(key)
         if this_type is None:
             continue
         if this_type.startswith(("int", "uint")):
-            fill_value = 0
+            # Null-free by construction: nullable integers are typed float.
+            continue
         elif this_type.startswith("float"):
-            fill_value = 0.
+            x[key] = [
+                float("nan") if v is None else float(v) if isinstance(v, int) else v
+                for v in x[key]
+            ]
+            continue
         elif this_type in ("string", "large_string"):
             fill_value = ""
         else:
@@ -230,6 +250,7 @@ class DataPipeline:
         columns_to_keep: Iterable[str | ColumnTransform] | None = None,
         output_format: str = DEFAULT_FORMAT,
         output_format_opts: Mapping[str, Any] | None = None,
+        missing_indicators: bool = False,
         cache_dir: str | None = None,
         _version: str = __version__,
         _app: str = app_name
@@ -243,6 +264,8 @@ class DataPipeline:
         self._version = _version
         self._app = _app
         self.column_transforms = self.canonicalize_transforms(self._column_transforms)
+        if missing_indicators:
+            self._add_missing_indicators()
         self.output_format = output_format
         self.output_format_opts = output_format_opts or {}
         self.data_in = None
@@ -251,11 +274,8 @@ class DataPipeline:
         self._data_loaded = False
 
     def __eq__(self, other) -> bool:
-        if hasattr(other, "column_transforms_serialized"):
-            return all([
-                self.column_transforms_serialized == other.column_transforms_serialized,
-                self.columns_to_keep == other.columns_to_keep,
-            ])
+        if hasattr(other, "to_config"):
+            return self.to_config() == other.to_config()
         else:
             raise ValueError(f"Cannot compare {type(self)} with {type(other)}.")
 
@@ -277,7 +297,16 @@ class DataPipeline:
             config = load_json(config)
         config = dict(config)
         # A saved checkpoint config contains pipeline and source sections.
+        # Only the pipeline section is read here, and it has the same layout
+        # in every schema, so older checkpoints pass (aspect <= 0.0.6 wrote
+        # no schema_version). Newer ones may not be readable.
         if "pipeline" in config:
+            schema_version = config.get("schema_version", 0)
+            if schema_version > SCHEMA_VERSION:
+                raise ValueError(
+                    f"Checkpoint schema is version {schema_version} but "
+                    f"package is using version {SCHEMA_VERSION}"
+                )
             config = config["pipeline"]
         
         config_keys = {
@@ -285,6 +314,7 @@ class DataPipeline:
             "columns_to_keep",
             "output_format",
             "output_format_opts",
+            "missing_indicators",
         }
         if set(config) <= config_keys:
             return cls(
@@ -300,6 +330,10 @@ class DataPipeline:
                 ),
                 output_format_opts=config.get(
                     "output_format_opts",
+                ),
+                missing_indicators=config.get(
+                    "missing_indicators",
+                    False,
                 ),
                 cache_dir=cache_dir,
             )
@@ -382,6 +416,24 @@ class DataPipeline:
             prev_transform = transform
         return tuple(out)
 
+    def _add_missing_indicators(self) -> None:
+        """Add a `missing` branch, named missing:<name>, for each branch.
+
+        Idempotent, so already-expanded configurations can be reloaded.
+        """
+        for name, transforms in list(self.column_transforms.items()):
+            if name.startswith(MISSING_PREFIX):
+                continue
+            indicator = ColumnTransform("missing", transforms[0].input_column)
+            existing = self.column_transforms.get(MISSING_PREFIX + name)
+            if existing is not None and tuple(existing) != (indicator,):
+                raise ValueError(
+                    f"Transform {MISSING_PREFIX + name} is already defined "
+                    "differently, so missing indicators cannot be added."
+                )
+            self.column_transforms[MISSING_PREFIX + name] = (indicator,)
+        return None
+
     def canonicalize_transforms(
         self,
         column_transforms: Mapping[str, Any] | Iterable,
@@ -440,7 +492,8 @@ class DataPipeline:
     def _featurize(
         x: Mapping[str, ArrayLike],
         column_transforms: Mapping[str, dict],
-        backend_versions: Mapping[str, str] | None = None
+        backend_versions: Mapping[str, str] | None = None,
+        types: Mapping[str, Any] | None = None
     ) -> dict[str, np.ndarray]:
         # `backend_versions` is unused here: it is part of the cache key.
 
@@ -454,6 +507,9 @@ class DataPipeline:
                     f"Output column name {name} already in data: {','.join(x)}. "
                     "Change transform name to avoid overwriting."
                 )
+        # Transforms read a filled copy, so source columns pass through
+        # unchanged, nulls included.
+        filled = _fill_na({key: x[key] for key in x}, types or {})
         for name, transforms in column_transforms.items():
             prev_transform = None
             for i, transform in enumerate(transforms):
@@ -461,9 +517,9 @@ class DataPipeline:
                     input_column = transform.input_column
                 else:
                     input_column = prev_transform.output_column
-                x = transform(x)
+                filled = transform(filled)
                 prev_transform = transform
-            x[name] = x[transform.output_column]
+            x[name] = filled[transform.output_column]
         return x
 
     @staticmethod
@@ -543,6 +599,18 @@ class DataPipeline:
             else:
                 return None
 
+        def _fill_type(key, f):
+            # Integers with nulls are filled as floats in every batch, so
+            # that batches with and without nulls have the same type.
+            dtype = _check_type(f)
+            if (
+                dtype is not None
+                and dtype.startswith(("int", "uint"))
+                and resolved.data.data.column(key).null_count > 0
+            ):
+                return "float64"
+            return dtype
+
         # Transforms resolve shared downloads (e.g. model weights) from here.
         from .cache import use_cache
         with use_cache(cache_dir or self.cache_dir):
@@ -550,22 +618,14 @@ class DataPipeline:
                 resolved
                 .data
                 .map(
-                    _fill_na,
-                    fn_kwargs={
-                        "types": {
-                            key: _check_type(f)
-                            for key, f in resolved.data.info.features.items()
-                        },
-                    },
-                    batched=True,
-                    batch_size=batch_size,
-                    desc="Filling NaN values",
-                )
-                .map(
                     self._featurize,
                     fn_kwargs={
                         "column_transforms": self.column_transforms_serialized,
                         "backend_versions": _backend_versions(),
+                        "types": {
+                            key: _fill_type(key, f)
+                            for key, f in resolved.data.info.features.items()
+                        },
                     },
                     batched=True,
                     batch_size=batch_size,

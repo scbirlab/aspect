@@ -1,7 +1,9 @@
 """SMILES cleaning shared by molecular featurizers."""
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Mapping
 from typing import TYPE_CHECKING, Any
+
+from .registry import register_function
 
 if TYPE_CHECKING:
     from rdkit.Chem import Mol
@@ -109,3 +111,53 @@ def clean_smiles(
             protonation_pH=protonation_pH,
         )
     ]
+
+
+@register_function("clean-smiles")
+def CleanSmiles(
+    desalt: bool = True,
+    protonate: bool = True,
+    protonation_pH: float = DEFAULT_PH,
+) -> Callable:
+    """Canonical, optionally desalted and protonated SMILES, as a transform.
+
+    Molecular featurizers use their input SMILES as given, so chain this
+    before them to clean, e.g. `("smiles", ["clean-smiles", "chemeleon"])`.
+    Branches that start with the same `clean-smiles` step share one cleaned
+    column, so cleaning runs once per batch.
+
+    Parameters
+    ==========
+    desalt : bool
+        Keep only the parent fragment (schemist / RDKit `FragmentParent`).
+        Default: `True`.
+    protonate : bool
+        Set the dominant protonation state at `protonation_pH` (schemist /
+        Dimorphite-DL). Default: `True`.
+    protonation_pH : float
+        pH for `protonate`. Default: 7.4.
+
+    Returns
+    =======
+    Callable
+        Function mapping (data, input_column) → list of SMILES, with `None`
+        where the input is missing or cannot be parsed.
+
+    Examples
+    ========
+    >>> CleanSmiles()({"s": ["OC(=O)C.[Na+]", "C(C)O", "nonsense"]}, "s")
+    ['CC(=O)[O-]', 'CCO', None]
+
+    """
+    def _clean_smiles(
+        data: Mapping[str, Iterable],
+        input_column: str
+    ) -> list[str | None]:
+        return clean_smiles(
+            data[input_column],
+            desalt=desalt,
+            protonate=protonate,
+            protonation_pH=protonation_pH,
+        )
+
+    return _clean_smiles

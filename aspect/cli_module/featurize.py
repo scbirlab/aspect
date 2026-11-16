@@ -94,13 +94,20 @@ def _common_feature_spec_routine(x: Union[str, Iterable[str]], args_extras=None)
 def _validate_checkpoints(chk1, path):
     from ..data import DataPipeline
     print_err(f"[INFO] Validating checkpoint at {path}...", end="")
-    pipeline2 = DataPipeline().load_checkpoint(path)
+    # Only the configuration is compared, so don't featurize the reloaded
+    # data: its packaged source has a new fingerprint and would never hit
+    # the cache.
+    pipeline2 = DataPipeline.load_checkpoint(
+        path,
+        skip_call=True,
+        cache_dir=chk1.cache_dir,
+    )
     if chk1 != pipeline2:
-        attr1, attr2 = vars(chk1), vars(pipeline2)
+        config1, config2 = chk1.to_config(), pipeline2.to_config()
         wrong_attributes = {
-            k: (attr1[k], "!=", v) 
-            for k, v in attr2.items() 
-            if v != attr1[k]
+            k: (config1.get(k), "!=", v)
+            for k, v in config2.items()
+            if v != config1.get(k)
         }
         raise IOError(
             f"Checkpoint at {path} does not recreate the same object. "
@@ -128,6 +135,7 @@ def _serialize(args: Namespace) -> None:
     pipeline = DataPipeline(
         column_transforms=column_transforms,
         columns_to_keep=extras,
+        missing_indicators=args.missing_indicators,
     )
     pipeline.save(output)
     _validate_checkpoints(pipeline, output)
@@ -138,7 +146,7 @@ def _serialize(args: Namespace) -> None:
 def _featurize(args: Namespace) -> None:
     
     from providence import DataResolver
-    from ..data import DataPipeline
+    from ..data import CONFIG_FILENAME, DataPipeline
     
     if args.checkpoint is None and args.output is None:
         raise ValueError(
@@ -150,13 +158,26 @@ def _featurize(args: Namespace) -> None:
         pipeline = DataPipeline(
             column_transforms=column_transforms,
             columns_to_keep=extras,
+            missing_indicators=args.missing_indicators,
             cache_dir=args.cache,
         )
     elif args.config:
         extras = args.extras or []
-        pipeline = DataPipeline(
+        # A pipeline JSON, a checkpoint's config.json, or a checkpoint
+        # directory. Only the configuration is read (from_config checks the
+        # checkpoint schema): its stored data are not needed here.
+        config = args.config
+        if os.path.isdir(config):
+            config = os.path.join(config, CONFIG_FILENAME)
+        pipeline = DataPipeline.from_config(
+            config,
             cache_dir=args.cache,
-        ).load(args.config)
+        )
+        if args.missing_indicators:
+            pipeline = DataPipeline.from_config(
+                pipeline.to_config() | {"missing_indicators": True},
+                cache_dir=args.cache,
+            )
     else:
         raise ValueError(f"One of --features or --config must be provided.")
     

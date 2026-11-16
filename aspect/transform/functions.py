@@ -30,6 +30,23 @@ def identity(x) -> np.ndarray:
     return np.asarray(x)
 
 
+@register_function("missing")
+@transform
+def missing(x) -> np.ndarray:
+    """True where a value is missing: null, NaN or the empty string.
+
+    Transforms see inputs after missing values are filled (NaN for numbers,
+    "" for strings), so the empty string counts as missing.
+
+    """
+    return np.asarray([
+        v is None
+        or (isinstance(v, (float, np.floating)) and v != v)  # incl. np.float32
+        or (isinstance(v, str) and v == "")
+        for v in x
+    ], dtype=bool)
+
+
 @register_function("log")
 @transform
 def natural_log(x) -> np.ndarray:

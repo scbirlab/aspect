@@ -9,7 +9,7 @@ from pathlib import Path
 from carabiner import print_err
 import numpy as np
 
-from .cleaning import DEFAULT_PH, clean_mols
+from .cleaning import clean_mols
 from .registry import register_function
 
 CHEMELEON_URL: str = "https://zenodo.org/records/15460715/files/chemeleon_mp.pt"
@@ -162,9 +162,6 @@ def _load_chemeleon(device: str):
 def CheMeleon(
     batch_size: int = 256,
     device: str | None = None,
-    desalt: bool = True,
-    protonate: bool = True,
-    protonation_pH: float = DEFAULT_PH,
 ) -> Callable:
     """Frozen CheMeleon foundation-model embeddings from SMILES.
 
@@ -172,7 +169,8 @@ def CheMeleon(
     is a Chemprop D-MPNN pre-trained to predict Mordred descriptors. This
     transform runs its message-passing encoder with fixed weights (eval mode,
     fp32, `torch.no_grad()`) and mean-aggregates atom embeddings, matching
-    upstream `CheMeleonFingerprint`.
+    upstream `CheMeleonFingerprint`. SMILES are used as given; chain
+    `clean-smiles` before this transform to desalt or protonate them.
 
     Weights are pinned to Zenodo record 15460715 and verified by SHA-256, so
     cached features stay valid. Weights are fetched on first call into the
@@ -187,16 +185,6 @@ def CheMeleon(
         not depend on batching.
     device : str, optional
         Torch device. Default: CUDA if available, else CPU.
-    desalt : bool
-        Embed only the parent fragment (schemist / RDKit `FragmentParent`),
-        dropping counterions and solvents. Default: `True`.
-    protonate : bool
-        Set the dominant protonation state at `protonation_pH` (schemist /
-        Dimorphite-DL). Default: `True`. With `desalt` and `protonate` both
-        `False`, SMILES are parsed with plain `MolFromSmiles`, matching
-        upstream exactly.
-    protonation_pH : float
-        pH for `protonate`. Default: 6.7.
 
     Returns
     =======
@@ -229,12 +217,7 @@ def CheMeleon(
         data: Mapping[str, Iterable],
         input_column: str
     ) -> np.ndarray:
-        parsed = clean_mols(
-            data[input_column],
-            desalt=desalt,
-            protonate=protonate,
-            protonation_pH=protonation_pH,
-        )
+        parsed = clean_mols(data[input_column], desalt=False, protonate=False)
         out = np.zeros((len(parsed), CHEMELEON_DIM), dtype=np.float32)
         idx = [i for i, m in enumerate(parsed) if m is not None]
         mols = [parsed[i] for i in idx]

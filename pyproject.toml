@@ -1,6 +1,6 @@
 [project]
 name = "aspect-data"
-version = "0.1.2"
+version = "0.1.3"
 authors = [
   { name="Eachan Johnson", email="eachan.johnson@crick.ac.uk" },
 ]
@@ -36,22 +36,23 @@ classifiers = [
 dependencies = [
   "carabiner-tools[pd,mpl]>=0.0.5.post3",
   "datasets>=3.0.0",
-  "filelock",
-  "huggingface_hub",
-  "numpy",
+  "filelock>=4.0",
+  "huggingface_hub>=2.0",
+  "numpy>=2.0",
   "providence>=0.0.2",
-  "tqdm",
+  "tqdm>=4.0",
 ]
 
 [project.optional-dependencies]
-chem = ["schemist[protonate]>=0.1.2"]
+chem = ["schemist[protonate]>=0.1.4"]
 torch = ["torch>=2.4"]
 chemprop = ["aspect-data[torch,chem]", "chemprop>=2.2.0"]
 chemeleon = ["aspect-data[chemprop]"]
+atom-jepa = ["aspect-data[torch,chem]", "atom-jepa>=0.4"]
 deep = ["aspect-data[torch,chem]", "transformers"]
 esm = ["aspect-data[torch]", "transformers"]
 bio = ["vectome>=0.0.8"]
-dev = ["aspect-data[chemeleon,deep,esm,bio]", "pytest>=7.4", "flake8"]
+dev = ["aspect-data[chemeleon,atom-jepa,deep,esm,bio]", "pytest>=7.4", "flake8"]
 
 [project.urls]
 "Homepage" = "https://github.com/scbirlab/aspect"
