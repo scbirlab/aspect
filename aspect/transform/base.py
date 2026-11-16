@@ -4,7 +4,6 @@ from typing import Any, Callable, Dict, Iterable, Mapping, Union
 from dataclasses import asdict, dataclass, field
 from functools import partial
 
-from carabiner import print_err
 import numpy as np
 
 from .. import app_name, __version__
@@ -176,8 +175,8 @@ class ColumnTransform:
         inputs: Mapping[str, Iterable]
     ) -> Dict[str, np.ndarray]:
         """Execute the function with stored parameters."""
+        # Branches sharing a step (same function, input and arguments) share
+        # its output column, so the step runs once.
         if self.output_column not in inputs:
             inputs[self.output_column] = self.apply(inputs)
-        else:
-            print_err(f"[WARN] {self.output_column} already present, skipping.")
         return inputs

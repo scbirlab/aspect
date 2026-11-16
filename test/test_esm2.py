@@ -17,10 +17,12 @@ LONG = (
 @pytest.fixture(scope="module")
 def esm2():
     from aspect.transform.deep_functions import ESM2
+    f = ESM2(model=MODEL)
     try:
-        return ESM2(model=MODEL)
+        _embed(f, [SHORT])  # model loads on first call
     except OSError as e:  # no network / hub unavailable
         pytest.skip(f"Could not load {MODEL}: {e}")
+    return f
 
 
 def _embed(f, seqs):
@@ -51,13 +53,10 @@ def test_invalid_sequences_are_zero(esm2):
     assert np.all(x[1:] == 0)
 
 
-def test_cls_pooling_differs_from_mean():
+def test_cls_pooling_differs_from_mean(esm2):
     from aspect.transform.deep_functions import ESM2
-    try:
-        f = ESM2(model=MODEL, pooling="cls")
-    except OSError as e:
-        pytest.skip(f"Could not load {MODEL}: {e}")
-    mean = _embed(ESM2(model=MODEL), [SHORT])
+    f = ESM2(model=MODEL, pooling="cls")
+    mean = _embed(esm2, [SHORT])
     assert not np.allclose(_embed(f, [SHORT]), mean)
 
 
@@ -74,9 +73,9 @@ def test_long_sequences(esm2):
 
 def test_pipeline_registration():
     from aspect.data import DataPipeline
+    pipe = DataPipeline({"emb": ("seq", {"name": "esm2", "kwargs": {"model": MODEL}})})
     try:
-        pipe = DataPipeline({"emb": ("seq", {"name": "esm2", "kwargs": {"model": MODEL}})})
+        out = pipe({"seq": [SHORT, LONG]}).data
     except OSError as e:
         pytest.skip(f"Could not load {MODEL}: {e}")
-    out = pipe({"seq": [SHORT, LONG]}).data
     assert np.asarray(out["emb"]).shape == (2, 320)

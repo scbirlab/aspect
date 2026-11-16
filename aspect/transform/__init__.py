@@ -4,8 +4,11 @@ def _load_all():
     try:
         from . import (
             functions, 
+            cleaning,
             chemprop,
             chemeleon,
+            conformers,
+            atomjepa,
             deep_functions 
         )  # importing populates FUNCTION_REGISTRY as a side effect
     except (ImportError, NameError) as e:
