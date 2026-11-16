@@ -55,6 +55,12 @@ def main() -> None:
         help='Save materialised data tables for remote data.',
     )
 
+    missing_indicators = CLIOption(
+        '--missing-indicators',
+        action='store_true',
+        help='Add a Boolean missing:<output> column per feature, True where its input is missing.',
+    )
+
     output_name = CLIOption(
         '--output', '-o', 
         type=str,
@@ -96,6 +102,7 @@ def main() -> None:
             output_name,
             feature_cols,
             extra_cols,
+            missing_indicators,
         ],
         main=_serialize,
     )
@@ -114,6 +121,7 @@ def main() -> None:
             slice_end,
             _config,
             random_seed,
+            missing_indicators,
             cache,
         ],
         main=_featurize,

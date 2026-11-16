@@ -256,13 +256,19 @@ aspect featurize compounds.csv \
     --output features.parquet
 ```
 
-A saved specification can be supplied with `--config`:
+A saved specification can be supplied with `--config`, either as a checkpoint directory or as a pipeline JSON file (as written by `DataPipeline.to_config`):
 
 ```bash
 aspect featurize compounds.csv \
     --config feature-spec.as \
     --output features.parquet
 ```
+
+#### Missing values
+
+Columns are written out unchanged, nulls included. Transforms see numeric nulls as `NaN`, which propagates (e.g. `log` of a missing value is `NaN`), and string nulls as `""`, which molecular featurizers treat as an invalid SMILES (usually a zero vector). Other string transforms featurize the empty string, so `hash` gives a non-zero vector; use missing indicators if you need to tell these rows apart.
+
+The `missing` transform gives a Boolean column, True where its input is null, NaN or the empty string (empty strings count as missing, which suits SMILES and other identifiers, but not categories where "" is a real value) (e.g. `--features smiles:missing@smiles_missing`). `--missing-indicators` (or `"missing_indicators": true` in a pipeline config that uses the `column_transforms` key) is shorthand that adds a `missing:<name>` branch on the input of every transform output `<name>`. Saved configurations contain the expanded branches. The indicators can be used as features downstream, e.g. in Arvore. Integer columns with nulls are read by transforms as float64, so their values above 2^53 are rounded; integer columns without nulls stay exact.
 
 #### Checkpoint without exporting
 
