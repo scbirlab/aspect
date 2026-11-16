@@ -507,6 +507,16 @@ The `scale` transform in this example is a custom transform that must be registe
 
 Chains execute in the supplied order. Each transform must accept the representation produced by the preceding transform.
 
+Branches that start with the same step (same transform, input column and arguments) share that step's output, so it runs once per batch. For example, one `clean-smiles` step can feed several molecular featurizers, and also be written out by naming it as its own branch:
+
+```python
+pipe = DataPipeline({
+    "clean_smiles": ("smiles", "clean-smiles"),
+    "morgan": ("smiles", ["clean-smiles", "morgan-fingerprint"]),
+    "chemeleon": ("smiles", ["clean-smiles", "chemeleon"]),
+})
+```
+
 ### CLI specifications
 
 The CLI format is:
@@ -581,9 +591,12 @@ pip install "aspect-data[chem]"
 
 | Transform | Input | Output |
 |---|---|---|
+| `clean-smiles` | SMILES | Canonical SMILES, desalted and protonated |
 | `morgan-fingerprint` | SMILES | Molecular fingerprint |
 | `descriptors-2d` | SMILES | 2D molecular descriptors |
 | `descriptors-3d` | SMILES | 3D molecular descriptors |
+
+Molecular featurizers use SMILES as given and make no cleaning decisions. To clean, chain `clean-smiles` first (CLI: `smiles:clean-smiles:morgan-fingerprint@morgan`). It canonicalizes, keeps the parent fragment and sets the dominant protonation state at pH 7.4 (`desalt=True`, `protonate=True`, `protonation_pH=7.4`); SMILES it cannot parse become null, which featurizers treat as missing.
 
 `descriptors-3d` averages RDKit 3D descriptors over an ETKDG conformer ensemble and appends their standard deviations across conformers. By default it embeds `clip(1 + rotatable bonds, 3, 10)` conformers per molecule, prunes near-duplicates (heavy-atom RMSD < 0.5 Å), and skips force-field minimisation. Options (`n_conformers`, `max_conformers`, `prune_rms_thresh`, `minimize`, `with_std`, `n_threads`, `seed`) go in `kwargs` and are recorded in the transform config:
 
@@ -671,7 +684,6 @@ pipe = DataPipeline({
             "kwargs": {
                 "ref": "facebook/bart-base",
                 "aggregator": ["mean", "max"],
-                "clean_smiles": False,  # free text, not SMILES
             },
         },
     ),
@@ -682,7 +694,7 @@ features = pipe(data).data
 
 Inputs are embedded in length-sorted chunks of `batch_size` strings (default 64), and aggregators ignore padding tokens, so memory is bounded and embeddings do not depend on batch composition. Model weights may be downloaded on first use.
 
-By default inputs are treated as SMILES and cleaned before tokenizing: canonicalized, desalted, and set to their dominant protonation state at pH 6.7 (`clean_smiles=True`, `desalt=True`, `protonate=True`, `protonation_pH=6.7`). Inputs that fail to parse are embedded as `<unk>`, so **set `"clean_smiles": False` for free text**, as in the example above.
+Inputs are tokenized as given, so `hf-bart` works on SMILES and free text alike; chain `clean-smiles` before it to clean SMILES. Missing inputs are embedded as `<unk>`.
 
 ### Protein embeddings
 
@@ -742,7 +754,7 @@ pipe = DataPipeline({"chemeleon": ("smiles", "chemeleon")})
 features = pipe(data).data
 ```
 
-By default SMILES are desalted to the parent fragment and set to their dominant protonation state at pH 6.7 (`desalt=True`, `protonate=True`, `protonation_pH=6.7`), so `CC(=O)O.[Na+]`, `CC(=O)O` and `CC(=O)[O-]` give the same vector; set `desalt` and `protonate` to `False` to match upstream `CheMeleonFingerprint` exactly. Other options: `batch_size` (default 256) and `device`. Missing or invalid SMILES give zero vectors.
+SMILES are used as given, matching upstream `CheMeleonFingerprint`; chain `clean-smiles` first, e.g. `("smiles", ["clean-smiles", "chemeleon"])`, so that `CC(=O)O.[Na+]`, `CC(=O)O` and `CC(=O)[O-]` give the same vector. Options: `batch_size` (default 256) and `device`. Missing or invalid SMILES give zero vectors.
 
 Weights are downloaded from [Zenodo](https://zenodo.org/records/15460715) on first use to `chemeleon/chemeleon_mp.pt` in the [cache directory](#configure-the-cache) and verified by SHA-256. Concurrent processes share one download through a file lock, and a cached file failing the checksum is re-downloaded once. Locking across nodes needs a filesystem with working locks (e.g. Lustre mounted with `flock`, not `localflock`); otherwise point the cache at node-local storage.
 

@@ -71,7 +71,7 @@ def test_hf_models_download_into_pipeline_cache(tmp_path):
     ref = "hf-internal-testing/tiny-random-BartForConditionalGeneration"
     cache = tmp_path / "cli-cache"
     pipe = DataPipeline(
-        {"e": ("s", {"name": "hf-bart", "kwargs": {"ref": ref, "clean_smiles": False}})},
+        {"e": ("s", {"name": "hf-bart", "kwargs": {"ref": ref}})},
         cache_dir=str(cache),
     )
     try:

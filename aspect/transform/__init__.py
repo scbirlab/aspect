@@ -4,6 +4,7 @@ def _load_all():
     try:
         from . import (
             functions, 
+            cleaning,
             chemprop,
             chemeleon,
             deep_functions 
