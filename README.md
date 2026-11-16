@@ -193,6 +193,7 @@ Install only the features you need:
 | `torch` | PyTorch integration | `pip install "aspect-data[torch]"` |
 | `chemprop` | Chemprop molecular features | `pip install "aspect-data[chemprop]"` |
 | `chemeleon` | Frozen CheMeleon molecular embeddings | `pip install "aspect-data[chemeleon]"` |
+| `atom-jepa` | Frozen Atom-JEPA and Atom-JEPA-Bio 3D molecular embeddings | `pip install "aspect-data[atom-jepa]"` |
 | `deep` | Transformer-based SMILES/text embeddings (includes `chem`) | `pip install "aspect-data[deep]"` |
 | `esm` | ESM2 protein embeddings | `pip install "aspect-data[esm]"` |
 
@@ -595,8 +596,11 @@ pip install "aspect-data[chem]"
 | `morgan-fingerprint` | SMILES | Molecular fingerprint |
 | `descriptors-2d` | SMILES | 2D molecular descriptors |
 | `descriptors-3d` | SMILES | 3D molecular descriptors |
+| `conformers` | SMILES | 3D conformers (atomic numbers and coordinates) |
 
 Molecular featurizers use SMILES as given and make no cleaning decisions. To clean, chain `clean-smiles` first (CLI: `smiles:clean-smiles:morgan-fingerprint@morgan`). It canonicalizes, keeps the parent fragment and sets the dominant protonation state at pH 7.4 (`desalt=True`, `protonate=True`, `protonation_pH=7.4`); SMILES it cannot parse become null, which featurizers treat as missing.
+
+`conformers` embeds 3D conformers, with hydrogens, using schemist (ETKDG, then MMFF94). Options: `n_conformers` (default 1), `seed` (42), `etkdg_version` (3), `prune_rms_thresh` (-1, no pruning), `minimize` (`True`), `max_iters` (500) and `n_threads` (1); the defaults reproduce the Atom-JEPA protocol. Each row is a struct of `atomic_numbers` (int8 [N]) and `coordinates` (float32 [conformers, N, 3], Å), stored exactly in Arrow and Parquet. Rows are null where the SMILES is missing or invalid, or conformers could not be generated; chain `missing` after `conformers` (e.g. `smiles:conformers:missing@conformers_failed`) to flag them.
 
 `descriptors-3d` averages RDKit 3D descriptors over an ETKDG conformer ensemble and appends their standard deviations across conformers. By default it embeds `clip(1 + rotatable bonds, 3, 10)` conformers per molecule, prunes near-duplicates (heavy-atom RMSD < 0.5 Å), and skips force-field minimisation. Options (`n_conformers`, `max_conformers`, `prune_rms_thresh`, `minimize`, `with_std`, `n_threads`, `seed`) go in `kwargs` and are recorded in the transform config:
 
@@ -762,6 +766,33 @@ Weights are downloaded from [Zenodo](https://zenodo.org/records/15460715) on fir
 |---|---|---|
 | `ASPECT_CHEMELEON_LOCK_TIMEOUT` | `600` | Seconds to wait for another process's download |
 | `ASPECT_CHEMELEON_DOWNLOAD_TIMEOUT` | `60` | Socket timeout in seconds for the download |
+
+### Atom-JEPA embeddings
+
+Install with:
+
+```bash
+pip install "aspect-data[atom-jepa]"
+```
+
+The `atom-jepa` transform embeds 3D conformers with the frozen encoder of [Atom-JEPA](https://arxiv.org/abs/2610.08400), averaging each molecule's conformer embeddings. Generate the conformers with the `conformers` transform, whose defaults reproduce the Atom-JEPA protocol, so `("smiles", ["conformers", "atom-jepa"])` matches upstream Atom-JEPA exactly with the same RDKit version (tested bit-for-bit with RDKit 2026.09 and atom-jepa 0.4.0; conformers can differ across RDKit versions, which are part of the cache key). Branches that share a `conformers` step generate conformers once:
+
+```python
+pipe = DataPipeline({
+    "conformers": ("smiles", {"name": "conformers", "kwargs": {"n_conformers": 10}}),
+    "conformers_failed": ("smiles", [{"name": "conformers", "kwargs": {"n_conformers": 10}}, "missing"]),
+    "jepa_bio": ("smiles", [{"name": "conformers", "kwargs": {"n_conformers": 10}}, "atom-jepa"]),
+    "jepa": ("smiles", [
+        {"name": "conformers", "kwargs": {"n_conformers": 10}},
+        {"name": "atom-jepa", "kwargs": {"model": "molecules"}},
+    ]),
+})
+features = pipe(data).data
+```
+
+Options: `model` (`"bio"`, default, for Atom-JEPA-Bio, or `"molecules"`), `layers` (`"last"`, default, 256 values; `"all"`, the 8 blocks flattened to 2048; or a block 1-8), `batch_size` (conformers per forward pass, default 32, which bounds tensor memory), `device`, `precision` (`"fp32"`, default, or `"bf16"` on CUDA) and `revision`. Null conformers give zero vectors; `conformers_failed` in the example above marks those rows, so they can be told apart from real embeddings, e.g. when benchmarking representations. Averaging embeddings over conformers is not the same as averaging predictions over them.
+
+Weights are downloaded from [Hugging Face](https://huggingface.co/atom-jepa/atom-jepa) on first use, pinned to a commit (`revision`), into the Hugging Face cache inside the [cache directory](#configure-the-cache).
 
 ---
 

@@ -7,6 +7,8 @@ def _load_all():
             cleaning,
             chemprop,
             chemeleon,
+            conformers,
+            atomjepa,
             deep_functions 
         )  # importing populates FUNCTION_REGISTRY as a side effect
     except (ImportError, NameError) as e:
