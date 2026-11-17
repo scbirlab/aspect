@@ -49,6 +49,7 @@ _FEATURE_BACKENDS: tuple[str, ...] = (
     "transformers",
     "torch",
     "atom-jepa",
+    "unimol-tools",
     "e3nn",
     "torch-geometric",
 )
