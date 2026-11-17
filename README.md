@@ -767,6 +767,28 @@ Weights are downloaded from [Zenodo](https://zenodo.org/records/15460715) on fir
 | `ASPECT_CHEMELEON_LOCK_TIMEOUT` | `600` | Seconds to wait for another process's download |
 | `ASPECT_CHEMELEON_DOWNLOAD_TIMEOUT` | `60` | Socket timeout in seconds for the download |
 
+### Uni-Mol embeddings
+
+Install with `pip install "aspect-data[unimol]"`. `unimol` computes 512-dimensional
+frozen Uni-Mol v1 representations, averaging embeddings over input conformers.
+Use Aspect's shareable `conformers` transform by default:
+
+```python
+pipe = DataPipeline({
+    "unimol": ("smiles", ["conformers", "unimol"]),
+    "unimol_ensemble": ("smiles", [
+        {"name": "conformers", "kwargs": {"n_conformers": 5}}, "unimol"
+    ]),
+})
+```
+
+Alternatively, `("smiles", {"name": "unimol", "kwargs": {"conformers": "unimol"}})`
+uses Uni-Mol's own RDKit conformer generation (one conformer; seed 42). Options
+include `batch_size` (32), `remove_hs` (False), `device` (`cpu`/`cuda`) and
+`revision` (a pinned Hugging Face commit by default). Invalid inputs
+give zero vectors. Weights are downloaded on first use into the shared cache;
+loaded models are reused per configuration and cache directory.
+
 ### Atom-JEPA embeddings
 
 Install with:

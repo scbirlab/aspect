@@ -9,6 +9,7 @@ def _load_all():
             chemeleon,
             conformers,
             atomjepa,
+            unimol,
             deep_functions 
         )  # importing populates FUNCTION_REGISTRY as a side effect
     except (ImportError, NameError) as e:
